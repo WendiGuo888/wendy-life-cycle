@@ -6,7 +6,28 @@ import json
 import textwrap
 from pathlib import Path
 
+from store import export_user_json, import_user_json
 import streamlit as st
+
+st.markdown("### 🔄 数据备份 / Backup")
+
+c1, c2 = st.columns(2)
+with c1:
+    st.download_button(
+        "⬇️ 下载我的数据（JSON）",
+        data=export_user_json(),
+        file_name="bright_future_2026_mydata.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+
+with c2:
+    up = st.file_uploader("⬆️ 上传继续编辑（JSON）", type=["json"])
+    if up is not None:
+        import_user_json(up.getvalue())
+        st.success("已导入 ✅")
+        st.rerun()
+
 
 # ✅ Matplotlib 在 Cloud 上建议用 Agg
 import matplotlib
@@ -696,4 +717,5 @@ else:
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
