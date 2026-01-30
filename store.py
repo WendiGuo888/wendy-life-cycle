@@ -390,3 +390,78 @@ def import_user_json(file_bytes: bytes) -> None:
         st.session_state["STORE"] = data["STORE"]
     # 保留当前浏览器的 user_key，不强制覆盖
     _ensure_user_key()
+
+# ============================
+# EXTRA COMPAT: for page ② (36×10)
+# ============================
+
+def get_sprint_by_no(sprint_no: int):
+    """
+    兼容旧代码：返回一个 _SprintObj（属性访问：.theme/.objective/...）
+    若不存在返回 None
+    """
+    for sp in get_sprints():
+        if int(sp.sprint_no) == int(sprint_no):
+            return sp
+    return None
+
+
+def task_exists_in_sprint(sprint_no: int, title: str) -> bool:
+    """兼容旧代码：判断某 sprint 是否已有同名任务"""
+    title = (title or "").strip()
+    if not title:
+        return True
+    for t in list_tasks_for_sprint(sprint_no):
+        if (t.title or "").strip() == title:
+            return True
+    return False
+
+
+def add_task_to_sprint(sprint_no: int, title: str, source_care_id=None):
+    """
+    兼容旧代码：允许重复插入（旧 db.py 有这个版本）
+    但我们仍做最基本的空字符串过滤
+    """
+    sp = _get_sprint_raw_by_no(sprint_no)
+    if not sp:
+        return
+    title = (title or "").strip()
+    if not title:
+        return
+    sp["tasks"].append(
+        {
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "done": False,
+            "evidence": "",
+            "source_care_id": source_care_id,
+        }
+    )
+
+
+def delete_task(task_id: str):
+    """如果你的 36×10 页面支持删除任务，补这个"""
+    store = _ensure_store()
+    for sp in store.get("sprints", []) or []:
+        sp["tasks"] = [t for t in (sp.get("tasks", []) or []) if str(t.get("id")) != str(task_id)]
+
+
+def update_task_title(task_id: str, new_title: str):
+    """如果你的 36×10 页面支持编辑任务标题，补这个"""
+    new_title = (new_title or "").strip()
+    if not new_title:
+        return
+    store = _ensure_store()
+    for sp in store.get("sprints", []) or []:
+        for t in sp.get("tasks", []) or []:
+            if str(t.get("id")) == str(task_id):
+                t["title"] = new_title
+                return
+
+
+def clear_sprint_tasks(sprint_no: int):
+    """如果你的 36×10 页面有“一键清空该周期任务”，补这个"""
+    sp = _get_sprint_raw_by_no(sprint_no)
+    if not sp:
+        return
+    sp["tasks"] = []
