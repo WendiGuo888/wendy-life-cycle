@@ -12,7 +12,7 @@ st.set_page_config(
 
 from i18n import init_i18n, lang_selector, t
 
-from db import (
+from store import (
     regenerate_sprints,
     get_sprints,
     get_sprint_by_no,
@@ -446,3 +446,4 @@ for idx, sp in enumerate(periods_sorted):
             args=(sp.sprint_no,),
         )
         st.markdown("</div>", unsafe_allow_html=True)
+
