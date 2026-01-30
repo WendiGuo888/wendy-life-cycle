@@ -16,7 +16,7 @@ from matplotlib.patches import Circle
 
 
 from i18n import init_i18n, lang_selector
-from db import (
+from store import (
     get_or_create_annual_dig,
     update_annual_dig,
     get_sprints,
