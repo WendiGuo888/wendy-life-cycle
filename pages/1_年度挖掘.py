@@ -1,14 +1,13 @@
 import io
 import json
 import textwrap
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import streamlit as st
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 
 from i18n import init_i18n, lang_selector
-
 from db import (
     get_or_create_annual_dig,
     update_annual_dig,
@@ -19,9 +18,9 @@ from db import (
 # -----------------------
 # ✅ set_page_config 必须在任何 st.xxx 前
 # -----------------------
-lang = st.session_state.get("lang", "zh")
+lang0 = st.session_state.get("lang", "zh")
 st.set_page_config(
-    page_title=("① 年度挖掘" if lang == "zh" else "① Annual Planning"),
+    page_title=("① 年度挖掘" if lang0 == "zh" else "① Annual Planning"),
     page_icon="🌱",
     layout="wide",
 )
@@ -84,7 +83,7 @@ def dict_to_text(d: Dict[str, List[str]], zh_key: str, en_key: str) -> str:
     return "\n".join([str(x) for x in arr if str(x).strip()])
 
 def build_items_from_quadrants(d: Dict[str, List[str]]) -> List[str]:
-    keys = ["学业","事业","成长","身体","study","career","growth","health"]
+    keys = ["学业", "事业", "成长", "身体", "study", "career", "growth", "health"]
     out, seen = [], set()
     for k in keys:
         v = d.get(k, [])
@@ -110,8 +109,25 @@ def one_line(s: str, width: int) -> str:
     return wrapped[0] if wrapped else str(s)
 
 def _mpl_font_setup():
+    """
+    ✅ 云端更稳：优先加载 assets/fonts/NotoSansSC-Regular.otf（如果你放了）
+    否则退回 DejaVu Sans（至少不崩）
+    """
+    import os
     import matplotlib as mpl
-    mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+    from matplotlib import font_manager
+
+    font_path = os.path.join("assets", "fonts", "NotoSansSC-Regular.otf")
+    if os.path.exists(font_path):
+        try:
+            font_manager.fontManager.addfont(font_path)
+            prop = font_manager.FontProperties(fname=font_path)
+            mpl.rcParams["font.family"] = prop.get_name()
+        except Exception:
+            mpl.rcParams["font.sans-serif"] = ["DejaVu Sans"]
+    else:
+        mpl.rcParams["font.sans-serif"] = ["DejaVu Sans"]
+
     mpl.rcParams["axes.unicode_minus"] = False
 
 def safe_radius(items, base=2.25, scale=0.03):
@@ -123,10 +139,10 @@ def _pick_intersection_list(intersections: dict, keys: List[str]) -> List[str]:
         v = intersections.get(k)
         if isinstance(v, list) and v:
             return v
-    return intersections.get(keys[0], []) or []
+    v0 = intersections.get(keys[0], [])
+    return v0 if isinstance(v0, list) else []
 
 def draw_auto_title(ax, main_title: str, subtitle: str, signature: str, y_top: float, is_english: bool, mode: str):
-    # 字号
     if mode == "share":
         main_fs, sub_fs, sig_fs = 26, 16, 12
     else:
@@ -155,8 +171,9 @@ def draw_auto_title(ax, main_title: str, subtitle: str, signature: str, y_top: f
     for line in lines:
         ax.text(0, y, line, ha="center", va="center", fontsize=main_fs, fontweight="bold")
         y -= 0.80
-    ax.text(0, y-0.10, subtitle, ha="center", va="center", fontsize=sub_fs, fontweight="bold")
-    ax.text(0, y-0.80, signature, ha="center", va="center", fontsize=sig_fs, color="#555", alpha=0.60)
+
+    ax.text(0, y - 0.10, subtitle, ha="center", va="center", fontsize=sub_fs, fontweight="bold")
+    ax.text(0, y - 0.80, signature, ha="center", va="center", fontsize=sig_fs, color="#555", alpha=0.60)
 
 def render_life_circle_preview_png(
     name: str,
@@ -164,11 +181,11 @@ def render_life_circle_preview_png(
     resp_items: List[str],
     talent_items: List[str],
     intersections: dict,
-    mode: str = "full",  # share/full
+    mode: str = "full",
 ) -> bytes:
     _mpl_font_setup()
 
-    is_en = st.session_state.get("lang","zh") == "en"
+    is_en = st.session_state.get("lang", "zh") == "en"
 
     blue = "#4DA3FF"
     purple = "#7E57FF"
@@ -181,7 +198,6 @@ def render_life_circle_preview_png(
     ax.axis("off")
     ax.set_position([0, 0, 1, 1])
 
-    # 画布范围（预览）
     x_min, x_max = -6.6, 6.6
     y_min, y_max = -5.3, 7.6
     ax.set_xlim(x_min, x_max)
@@ -197,7 +213,6 @@ def render_life_circle_preview_png(
 
     alpha_circle = 0.22 if mode == "share" else 0.26
 
-    # 画圈（让左右圈在上层更明显）
     ax.add_patch(Circle(Resp_xy,  r_resp,  color=purple, alpha=alpha_circle, lw=2, zorder=1))
     ax.add_patch(Circle(Dream_xy, r_dream, color=blue,   alpha=alpha_circle, lw=2, zorder=2))
     ax.add_patch(Circle(Talent_xy,r_talent,color=green,  alpha=alpha_circle, lw=2, zorder=2))
@@ -214,13 +229,11 @@ def render_life_circle_preview_png(
     signature = f"{(name or 'YourName')} · 2026 · Life Circle"
     draw_auto_title(ax, title_main, "Life Circle", signature, y_top=y_max, is_english=is_en, mode=mode)
 
-    # 底部标签（梦想/天赋）
     label_fs = 18
     bottom_label_y = Dream_xy[1] - r_dream - 0.55
     ax.text(Dream_xy[0], bottom_label_y, dream_label, ha="center", va="center", fontsize=label_fs, fontweight="bold")
     ax.text(Talent_xy[0], bottom_label_y, talent_label, ha="center", va="center", fontsize=label_fs, fontweight="bold")
 
-    # 责任标签：紫圈右侧（英文竖排）
     resp_y = Resp_xy[1] + 0.10
     ideal_x = Resp_xy[0] + r_resp + 0.55
     if is_en:
@@ -230,16 +243,15 @@ def render_life_circle_preview_png(
         resp_x = min(ideal_x, x_max - 1.2)
         ax.text(resp_x, resp_y, resp_label, ha="left", va="center", fontsize=label_fs, fontweight="bold")
 
-    # slogan
     ax.text(0, y_min + 0.20, "Mission → Action → Reality", ha="center", va="center", fontsize=13, color="#666", alpha=0.55)
 
-    # center
     center = intersections.get("center", []) or intersections.get("中心", []) or []
     show_center, more_center = clamp_list(center, 6 if mode == "share" else 10)
     center_lines = [f"• {one_line(x, 18)}" for x in show_center]
     if more_center > 0:
         center_lines.append(f"… {more_center} more" if is_en else f"… 还有 {more_center} 条")
     center_text = center_title + "\n" + ("\n".join(center_lines) if center_lines else ("(empty)" if is_en else "（空）"))
+
     ax.text(
         0.0, 0.20,
         center_text,
@@ -250,9 +262,7 @@ def render_life_circle_preview_png(
         zorder=6
     )
 
-    # Full：三清单 + 三交集
     if mode == "full":
-        # lists
         def _list_block(title, items, x, y):
             show, more = clamp_list(items, 7)
             lines = [f"• {one_line(s, 18)}" for s in show]
@@ -271,7 +281,6 @@ def render_life_circle_preview_png(
         _list_block("Dream List" if is_en else "梦想清单", dream_items, Dream_xy[0] - 0.25, Dream_xy[1] + 0.15)
         _list_block("Talent List" if is_en else "天赋清单", talent_items, Talent_xy[0] + 0.25, Talent_xy[1] + 0.15)
 
-        # intersections
         resp_dream = _pick_intersection_list(intersections, ["resp_dream", "责任∩梦想", "责任_梦想", "rd"])
         resp_talent = _pick_intersection_list(intersections, ["resp_talent", "责任∩天赋", "责任_天赋", "rt"])
         dream_talent = _pick_intersection_list(intersections, ["dream_talent", "梦想∩天赋", "梦想_天赋", "dt"])
@@ -331,7 +340,6 @@ def assign_list_to_sprints(items: List[str], start_no: int, end_no: int):
         count += 1
     return count
 
-
 # -----------------------
 # 读 DB
 # -----------------------
@@ -358,7 +366,11 @@ st.caption(
 # A 基本信息
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("A｜基本信息", "A | Basic Info"))
-name = st.text_input(TT("你的名字（用于海报署名）", "Your name (for poster signature)"), value=default_name)
+name = st.text_input(
+    TT("你的名字（用于海报署名）", "Your name (for poster signature)"),
+    value=default_name,
+    key="annual_name_input",
+)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # B 四象限
@@ -373,32 +385,36 @@ quad_defs = [
     (TT("身体", "Health"), "身体", "health"),
 ]
 
-def render_quadrants(store_dict: dict) -> dict:
+def render_quadrants(store_dict: dict, prefix: str) -> dict:
+    """
+    ✅ 关键修复：每个 text_area 都带唯一 key（prefix + quadrant）
+    否则三个 tab 会 DuplicateElementId
+    """
     updated = dict(store_dict) if isinstance(store_dict, dict) else {}
     c1, c2 = st.columns(2)
 
     with c1:
         label, zh_k, en_k = quad_defs[0]
-        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110)
+        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110, key=f"{prefix}_qa")
         arr = lines_to_list(txt)
         updated[zh_k] = arr
         updated[en_k] = arr
 
         label, zh_k, en_k = quad_defs[1]
-        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110)
+        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110, key=f"{prefix}_qb")
         arr = lines_to_list(txt)
         updated[zh_k] = arr
         updated[en_k] = arr
 
     with c2:
         label, zh_k, en_k = quad_defs[2]
-        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110)
+        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110, key=f"{prefix}_qc")
         arr = lines_to_list(txt)
         updated[zh_k] = arr
         updated[en_k] = arr
 
         label, zh_k, en_k = quad_defs[3]
-        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110)
+        txt = st.text_area(label, value=dict_to_text(updated, zh_k, en_k), height=110, key=f"{prefix}_qd")
         arr = lines_to_list(txt)
         updated[zh_k] = arr
         updated[en_k] = arr
@@ -407,15 +423,15 @@ def render_quadrants(store_dict: dict) -> dict:
 
 with tabs[0]:
     st.caption(TT("把你拥有的能力/优势拆成四象限。", "Break down your talents into 4 quadrants."))
-    talent = render_quadrants(talent)
+    talent = render_quadrants(talent, prefix="talent")
 
 with tabs[1]:
     st.caption(TT("把你今年必须承担/必须完成的责任拆成四象限。", "Break down your responsibilities into 4 quadrants."))
-    resp = render_quadrants(resp)
+    resp = render_quadrants(resp, prefix="resp")
 
 with tabs[2]:
     st.caption(TT("把你想实现的愿景/梦想拆成四象限。", "Break down your dreams into 4 quadrants."))
-    dream = render_quadrants(dream)
+    dream = render_quadrants(dream, prefix="dream")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -438,14 +454,30 @@ center_text = st.text_area(
     TT("中心交汇（突破点）清单（每行一条）", "Center intersection (Breakthrough) list (one per line)"),
     value=center_default,
     height=120,
+    key="inter_center",
 )
 
 colA, colB = st.columns(2)
 with colA:
-    rd_text = st.text_area(TT("责任 ∩ 梦想（每行一条）", "Responsibility ∩ Dream (one per line)"), value=rd_default, height=110)
-    dt_text = st.text_area(TT("梦想 ∩ 天赋（每行一条）", "Dream ∩ Talent (one per line)"), value=dt_default, height=110)
+    rd_text = st.text_area(
+        TT("责任 ∩ 梦想（每行一条）", "Responsibility ∩ Dream (one per line)"),
+        value=rd_default,
+        height=110,
+        key="inter_rd",
+    )
+    dt_text = st.text_area(
+        TT("梦想 ∩ 天赋（每行一条）", "Dream ∩ Talent (one per line)"),
+        value=dt_default,
+        height=110,
+        key="inter_dt",
+    )
 with colB:
-    rt_text = st.text_area(TT("责任 ∩ 天赋（每行一条）", "Responsibility ∩ Talent (one per line)"), value=rt_default, height=110)
+    rt_text = st.text_area(
+        TT("责任 ∩ 天赋（每行一条）", "Responsibility ∩ Talent (one per line)"),
+        value=rt_default,
+        height=110,
+        key="inter_rt",
+    )
     st.markdown(
         TT(
             '<div class="small">不确定两两交集也没关系，先填中心突破点，后续再补。</div>',
@@ -454,7 +486,11 @@ with colB:
         unsafe_allow_html=True,
     )
 
-save_ok = st.button(TT("💾 保存四象限 + 交集", "💾 Save quadrants + intersections"), use_container_width=True)
+save_ok = st.button(
+    TT("💾 保存四象限 + 交集", "💾 Save quadrants + intersections"),
+    use_container_width=True,
+    key="save_quadrants_intersections",
+)
 if save_ok:
     intersections = {
         "center": lines_to_list(center_text),
@@ -469,9 +505,7 @@ if save_ok:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# -----------------------
-# ✅ Life Circle 预览（你要的三圈图回来）
-# -----------------------
+# Life Circle 预览
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("Life Circle 预览", "Life Circle Preview"))
 st.caption(TT("分享版更干净；完整版会显示三清单 + 三个两两交集。", "Share is clean; Full shows lists + pairwise intersections."))
@@ -481,8 +515,9 @@ mode_ui = st.radio(
     [TT("分享版（干净）", "Share (clean)"), TT("完整版（信息更多）", "Full (more info)")],
     horizontal=True,
     index=1,
+    key="preview_mode",
 )
-mode_key = "share" if "分享" in mode_ui or "Share" in mode_ui else "full"
+mode_key = "share" if ("分享" in mode_ui or "Share" in mode_ui) else "full"
 
 dream_items = build_items_from_quadrants(dream)
 resp_items = build_items_from_quadrants(resp)
@@ -502,14 +537,10 @@ preview_png = render_life_circle_preview_png(
     },
     mode=mode_key,
 )
-
-# 兼容旧 streamlit：用 width，不用 use_container_width
 st.image(preview_png, width=1100)
 st.markdown("</div>", unsafe_allow_html=True)
 
-# -----------------------
 # D 分配到 36×10
-# -----------------------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("D｜一键分配到 36×10（与②页面联动）", "D | Assign to 36×10 (sync with page ②)"))
 st.caption(
@@ -519,32 +550,58 @@ st.caption(
     )
 )
 
-st.write(TT(f"当前：责任 {len(resp_items)} 条｜天赋 {len(talent_items)} 条｜梦想 {len(dream_items)} 条",
-            f"Now: Responsibility {len(resp_items)} | Talent {len(talent_items)} | Dream {len(dream_items)}"))
+st.write(
+    TT(
+        f"当前：责任 {len(resp_items)} 条｜天赋 {len(talent_items)} 条｜梦想 {len(dream_items)} 条",
+        f"Now: Responsibility {len(resp_items)} | Talent {len(talent_items)} | Dream {len(dream_items)}",
+    )
+)
 
 if not ensure_sprints_ready():
     st.warning(
-        TT("还没有生成 36×10 周期。请先去「② 36×10」页面点击生成/重建 36×10。",
-           "No 36×10 cycles yet. Go to page ② and Generate/Rebuild 36×10 first.")
+        TT(
+            "还没有生成 36×10 周期。请先去「② 36×10」页面点击生成/重建 36×10。",
+            "No 36×10 cycles yet. Go to page ② and Generate/Rebuild 36×10 first.",
+        )
     )
 else:
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button(TT("🚀 分配责任 → Sprint 1..N", "🚀 Assign Responsibility → Sprint 1..N"), use_container_width=True):
+        if st.button(
+            TT("🚀 分配责任 → Sprint 1..N", "🚀 Assign Responsibility → Sprint 1..N"),
+            use_container_width=True,
+            key="assign_resp",
+        ):
             n = assign_list_to_sprints(resp_items, 1, 36)
             st.success(TT(f"已分配 {n} 条责任到 Sprint 1..{n}", f"Assigned {n} responsibility items to Sprint 1..{n}"))
             st.rerun()
     with c2:
-        if st.button(TT("🚀 分配天赋 → Sprint 7..18", "🚀 Assign Talent → Sprint 7..18"), use_container_width=True):
+        if st.button(
+            TT("🚀 分配天赋 → Sprint 7..18", "🚀 Assign Talent → Sprint 7..18"),
+            use_container_width=True,
+            key="assign_talent",
+        ):
             n = assign_list_to_sprints(talent_items, 7, 18)
-            st.success(TT(f"已分配 {n} 条天赋到 Sprint 7..{min(18, 7+n-1)}",
-                          f"Assigned {n} talent items to Sprint 7..{min(18, 7+n-1)}"))
+            st.success(
+                TT(
+                    f"已分配 {n} 条天赋到 Sprint 7..{min(18, 7+n-1)}",
+                    f"Assigned {n} talent items to Sprint 7..{min(18, 7+n-1)}",
+                )
+            )
             st.rerun()
     with c3:
-        if st.button(TT("🚀 分配梦想 → Sprint 19..36", "🚀 Assign Dream → Sprint 19..36"), use_container_width=True):
+        if st.button(
+            TT("🚀 分配梦想 → Sprint 19..36", "🚀 Assign Dream → Sprint 19..36"),
+            use_container_width=True,
+            key="assign_dream",
+        ):
             n = assign_list_to_sprints(dream_items, 19, 36)
-            st.success(TT(f"已分配 {n} 条梦想到 Sprint 19..{min(36, 19+n-1)}",
-                          f"Assigned {n} dream items to Sprint 19..{min(36, 19+n-1)}"))
+            st.success(
+                TT(
+                    f"已分配 {n} 条梦想到 Sprint 19..{min(36, 19+n-1)}",
+                    f"Assigned {n} dream items to Sprint 19..{min(36, 19+n-1)}",
+                )
+            )
             st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
