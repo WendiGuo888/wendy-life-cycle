@@ -385,10 +385,7 @@ def assign_list_to_sprints(items: List[str], start_no: int, end_no: int):
         add_task_to_sprint_unique(sprint_no, title, source_care_id=None)
         count += 1
     return count
-
-def ensure_sprints_ready() -> bool:
-    sprints = get_sprints()
-    return bool(sprints) and len(sprints) >= 36
+36
 
 
 # -----------------------
@@ -576,39 +573,93 @@ st.caption(
         "Rule: Responsibility→Sprint 1..N; Talent→Sprint 7..18; Dream→Sprint 19..36. One task per sprint by default.",
     )
 )
-st.write(TT(f"当前：责任 {len(resp_items)} 条｜天赋 {len(talent_items)} 条｜梦想 {len(dream_items)} 条",
-            f"Now: Responsibility {len(resp_items)} | Talent {len(talent_items)} | Dream {len(dream_items)}"))
+
+st.write(
+    TT(
+        f"当前：责任 {len(resp_items)} 条｜天赋 {len(talent_items)} 条｜梦想 {len(dream_items)} 条",
+        f"Now: Responsibility {len(resp_items)} | Talent {len(talent_items)} | Dream {len(dream_items)}",
+    )
+)
+
+# ✅ 单一定义（不要重复）
+def ensure_sprints_ready() -> bool:
+    sprints = get_sprints()
+    return isinstance(sprints, list) and len(sprints) >= 36
 
 if not ensure_sprints_ready():
     st.warning(
-        TT("还没有生成 36×10 周期。你可以在这里一键生成，然后再分配任务。",
-           "No 36×10 cycles yet. Generate them here first, then assign tasks.")
+        TT(
+            "还没有生成 36×10 周期。你可以在这里一键生成，然后再分配任务。",
+            "No 36×10 cycles yet. Generate them here first, then assign tasks.",
+        )
     )
-    start = st.date_input(TT("选择你的 36×10 开始日期", "Pick your 36×10 start date"), value=date.today(), key="gen_start_date")
-    if st.button(TT("🚀 立刻生成 36×10 周期", "🚀 Generate 36×10 cycles now"), use_container_width=True, key="gen_now"):
-        regenerate_sprints(start)
-        st.success(TT("已生成 36 个周期 ✅ 现在可以分配任务了", "Generated 36 cycles ✅ Now you can assign tasks"))
+    start = st.date_input(
+        TT("选择你的 36×10 开始日期", "Pick your 36×10 start date"),
+        value=date.today(),
+        key="gen_start_date",
+    )
+
+    if st.button(
+        TT("🚀 立刻生成 36×10 周期", "🚀 Generate 36×10 cycles now"),
+        use_container_width=True,
+        key="gen_now",
+    ):
+        regenerate_sprints(start or date.today())  # ✅ 兜底
+        st.success(
+            TT(
+                "已生成 36 个周期 ✅ 现在可以分配任务了",
+                "Generated 36 cycles ✅ Now you can assign tasks",
+            )
+        )
         st.rerun()
+
 else:
     c1, c2, c3 = st.columns(3)
+
     with c1:
-        if st.button(TT("🚀 分配责任 → 周期 1..N", "🚀 Assign Responsibility → Cycle 1..N"), use_container_width=True, key="assign_resp"):
+        if st.button(
+            TT("🚀 分配责任 → 周期 1..N", "🚀 Assign Responsibility → Cycle 1..N"),
+            use_container_width=True,
+            key="assign_resp",
+        ):
             n = assign_list_to_sprints(resp_items, 1, 36)
-            st.success(TT(f"已分配 {n} 条责任到 周期 1..{n}", f"Assigned {n} responsibility items to Cycle 1..{n}"))
-            st.rerun()
-    with c2:
-        if st.button(TT("🚀 分配天赋 → 周期 7..18", "🚀 Assign Talent → Cycle 7..18"), use_container_width=True, key="assign_talent"):
-            n = assign_list_to_sprints(talent_items, 7, 18)
-            st.success(TT(f"已分配 {n} 条天赋到 周期 7..{min(18, 7+n-1)}",
-                          f"Assigned {n} talent items to Cycle 7..{min(18, 7+n-1)}"))
-            st.rerun()
-    with c3:
-        if st.button(TT("🚀 分配梦想 → 周期 19..36", "🚀 Assign Dream → Cycle 19..36"), use_container_width=True, key="assign_dream"):
-            n = assign_list_to_sprints(dream_items, 19, 36)
-            st.success(TT(f"已分配 {n} 条梦想到 周期 19..{min(36, 19+n-1)}",
-                          f"Assigned {n} dream items to Cycle 19..{min(36, 19+n-1)}"))
+            st.success(
+                TT(
+                    f"已分配 {n} 条责任到 周期 1..{n}",
+                    f"Assigned {n} responsibility items to Cycle 1..{n}",
+                )
+            )
             st.rerun()
 
+    with c2:
+        if st.button(
+            TT("🚀 分配天赋 → 周期 7..18", "🚀 Assign Talent → Cycle 7..18"),
+            use_container_width=True,
+            key="assign_talent",
+        ):
+            n = assign_list_to_sprints(talent_items, 7, 18)
+            st.success(
+                TT(
+                    f"已分配 {n} 条天赋到 周期 7..{min(18, 7+n-1)}",
+                    f"Assigned {n} talent items to Cycle 7..{min(18, 7+n-1)}",
+                )
+            )
+            st.rerun()
+
+    with c3:
+        if st.button(
+            TT("🚀 分配梦想 → 周期 19..36", "🚀 Assign Dream → Cycle 19..36"),
+            use_container_width=True,
+            key="assign_dream",
+        ):
+            n = assign_list_to_sprints(dream_items, 19, 36)
+            st.success(
+                TT(
+                    f"已分配 {n} 条梦想到 周期 19..{min(36, 19+n-1)}",
+                    f"Assigned {n} dream items to Cycle 19..{min(36, 19+n-1)}",
+                )
+            )
+            st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -618,3 +669,4 @@ st.info(
         "Next: go to page ② to edit each cycle's theme/deliverables and mark tasks done; finally go to ④ Export Hub to export poster and 6×6 Excel.",
     )
 )
+
