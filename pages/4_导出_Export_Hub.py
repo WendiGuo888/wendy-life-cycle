@@ -20,7 +20,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
-from db import (
+from store import (
     get_or_create_profile,
     get_or_create_annual_dig,
     get_sprints,
@@ -696,3 +696,4 @@ else:
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
