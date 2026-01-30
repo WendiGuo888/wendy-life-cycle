@@ -24,7 +24,7 @@ st.caption(
 )
 
 # ====== 你的 Google Form 嵌入链接 ======
-FORM_URL = "https://docs.google.com/forms/d/e/XXXX/viewform?embedded=true"
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSegYe_ldCenc1il7I4AFTQROkVwe9DdRZPyLbmy4bNCtOAGPQ/viewform?embedded=true"
 
 # ====== 页面说明（产品感） ======
 with st.expander(TT("为什么要填写这个？", "Why this feedback matters")):
