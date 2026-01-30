@@ -1,7 +1,16 @@
+# pages/4_导出.py
+# -*- coding: utf-8 -*-
+
 import io
 import json
 import textwrap
+from pathlib import Path
+
 import streamlit as st
+
+# ✅ Matplotlib 在 Cloud 上建议用 Agg
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 
@@ -93,11 +102,6 @@ def one_line(s: str, width: int) -> str:
     wrapped = textwrap.wrap(str(s), width=width)
     return wrapped[0] if wrapped else str(s)
 
-def _mpl_font_setup():
-    import matplotlib as mpl
-    mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
-    mpl.rcParams["axes.unicode_minus"] = False
-
 def safe_radius(items, base=2.25, scale=0.03):
     n = len([x for x in (items or []) if str(x).strip()])
     return max(base, base + n * scale)
@@ -107,23 +111,78 @@ def _pick_intersection_list(intersections: dict, keys):
         v = intersections.get(k)
         if isinstance(v, list) and v:
             return v
-    return intersections.get(keys[0], []) or []
+    v0 = intersections.get(keys[0], [])
+    return v0 if isinstance(v0, list) else []
 
 # =======================
-# 自动换行标题（避免英文裁切）
+# ✅ Cloud 中文字体修复（导出页也必须做）
 # =======================
-def draw_auto_title(ax, main_title: str, subtitle: str, signature: str, y_top: float, is_english: bool, mode: str):
-    if mode == "share":
-        main_fs, sub_fs, sig_fs = 26, 16, 12
+def _mpl_font_setup():
+    import matplotlib as mpl
+    from matplotlib import font_manager as fm
+
+    root = Path(__file__).resolve().parents[1]  # repo root
+    candidates = [
+        root / "NotoSansSC-Regular.ttf",
+        root / "assets" / "NotoSansSC-Regular.ttf",
+        root / "fonts" / "NotoSansSC-Regular.ttf",
+        root / "assets" / "fonts" / "NotoSansSC-Regular.ttf",
+    ]
+
+    font_name = None
+    for p in candidates:
+        if p.exists():
+            try:
+                fm.fontManager.addfont(str(p))
+                prop = fm.FontProperties(fname=str(p))
+                font_name = prop.get_name()
+                break
+            except Exception:
+                pass
+
+    if font_name:
+        mpl.rcParams["font.sans-serif"] = [
+            font_name, "Noto Sans CJK SC", "Source Han Sans SC",
+            "Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"
+        ]
     else:
-        main_fs, sub_fs, sig_fs = 24, 16, 12
+        mpl.rcParams["font.sans-serif"] = [
+            "Noto Sans CJK SC", "Source Han Sans SC",
+            "Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"
+        ]
 
-    lines = []
+    mpl.rcParams["axes.unicode_minus"] = False
+
+
+# =======================
+# ✅ 自动换行标题（不重叠）
+# =======================
+def draw_auto_title(
+    ax,
+    main_title: str,
+    subtitle: str,
+    signature: str,
+    y_top: float,
+    max_width_chars: int = 18,
+    is_english: bool = False,
+    mode: str = "share",
+):
+    if mode == "share":
+        main_fs = 28
+        sub_fs = 18
+        sig_fs = 12
+    else:
+        main_fs = 24
+        sub_fs = 16
+        sig_fs = 12
+
+    # 英文自动拆行（最多2行）
     if is_english:
         words = main_title.split(" ")
+        lines = []
         cur = ""
         for w in words:
-            if len(cur) + len(w) + (1 if cur else 0) <= 18:
+            if len(cur) + len(w) + (1 if cur else 0) <= max_width_chars:
                 cur = f"{cur} {w}".strip()
             else:
                 if cur:
@@ -136,15 +195,24 @@ def draw_auto_title(ax, main_title: str, subtitle: str, signature: str, y_top: f
     else:
         lines = [main_title]
 
-    y = y_top - 0.70
+    # 排版：主标题(1~2行) -> 副标题 -> 署名
+    y = y_top - 0.75
+    main_gap = 0.85
+    sub_gap = 0.70
+
     for line in lines:
         ax.text(0, y, line, ha="center", va="center", fontsize=main_fs, fontweight="bold")
-        y -= 0.80
-    ax.text(0, y-0.10, subtitle, ha="center", va="center", fontsize=sub_fs, fontweight="bold")
-    ax.text(0, y-0.80, signature, ha="center", va="center", fontsize=sig_fs, color="#555", alpha=0.60)
+        y -= main_gap
+
+    y -= 0.10
+    ax.text(0, y, subtitle, ha="center", va="center", fontsize=sub_fs, fontweight="bold")
+
+    y -= sub_gap
+    ax.text(0, y, signature, ha="center", va="center", fontsize=sig_fs, color="#555", alpha=0.60)
+
 
 # =======================
-# Life Circle 海报
+# Life Circle 海报渲染（导出下载用）
 # =======================
 def render_life_circle_png(
     canvas: str,   # preview/ig_square/ig_story/xhs_3x4/xhs_4x5
@@ -152,6 +220,8 @@ def render_life_circle_png(
     name: str,
     dream_items, resp_items, talent_items,
     intersections: dict,
+    show_n_full=10,
+    center_n_share=6,
 ):
     _mpl_font_setup()
 
@@ -159,6 +229,7 @@ def render_life_circle_png(
     purple = "#7E57FF"
     green = "#42C77A"
 
+    # 画布尺寸
     if canvas == "preview":
         dpi = 170
         figsize = (10.5, 7.5)
@@ -184,28 +255,31 @@ def render_life_circle_png(
     ax.axis("off")
     ax.set_position([0, 0, 1, 1])
 
-    # 画布范围（导出固定比例也不裁切标题）
+    # 画布范围（给右侧责任标签留空间）
     x_min, x_max = -6.6, 6.6
     y_min, y_max = -5.3, 7.6
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
 
+    # 圈位置
     Dream_xy = (-1.85, -1.15)
     Talent_xy = (1.85, -1.15)
     Resp_xy = (0.0, 1.65)
 
+    # ✅ 半径：空列表也给最小半径，保证三圈一定可见
     r_dream = max(2.35, safe_radius(dream_items))
     r_talent = max(2.35, safe_radius(talent_items))
     r_resp = max(2.35, safe_radius(resp_items))
 
+    # ✅ 提高透明度避免“像没画”
     alpha_circle = 0.22 if mode == "share" else 0.26
 
-    # 画圈顺序：紫圈底，左右圈在上
+    # ✅ 画层顺序：先紫圈，再左右圈
     ax.add_patch(Circle(Resp_xy,  r_resp,  color=purple, alpha=alpha_circle, lw=2, zorder=1))
     ax.add_patch(Circle(Dream_xy, r_dream, color=blue,   alpha=alpha_circle, lw=2, zorder=2))
     ax.add_patch(Circle(Talent_xy,r_talent,color=green,  alpha=alpha_circle, lw=2, zorder=2))
 
-    is_en = st.session_state.get("lang","zh") == "en"
+    is_en = st.session_state.get("lang", "zh") == "en"
     if is_en:
         title_main = "Find Your 2026 Breakthrough"
         dream_label = "Dream"
@@ -220,15 +294,26 @@ def render_life_circle_png(
         center_title = "三者交汇（突破点）"
 
     signature = f"{(name or 'YourName')} · 2026 · Life Circle"
-    draw_auto_title(ax, title_main, "Life Circle", signature, y_top=y_max, is_english=is_en, mode=mode)
 
-    # 底部标签：梦想 / 天赋
+    draw_auto_title(
+        ax=ax,
+        main_title=title_main,
+        subtitle="Life Circle",
+        signature=signature,
+        y_top=y_max,
+        max_width_chars=18,
+        is_english=is_en,
+        mode=mode,
+    )
+
+    # -------------------------
+    # 标签：梦想/天赋底部；责任紫圈右侧（英文竖排）
+    # -------------------------
     label_fs = 18
     bottom_label_y = Dream_xy[1] - r_dream - 0.55
     ax.text(Dream_xy[0], bottom_label_y, dream_label, ha="center", va="center", fontsize=label_fs, fontweight="bold")
     ax.text(Talent_xy[0], bottom_label_y, talent_label, ha="center", va="center", fontsize=label_fs, fontweight="bold")
 
-    # 责任标签：紫圈右侧（英文竖排）
     resp_y = Resp_xy[1] + 0.10
     ideal_x = Resp_xy[0] + r_resp + 0.55
     if is_en:
@@ -241,24 +326,39 @@ def render_life_circle_png(
     # slogan
     ax.text(0, y_min + 0.20, "Mission → Action → Reality", ha="center", va="center", fontsize=13, color="#666", alpha=0.55)
 
-    # center（分享/完整版都要）
+    # -------------------------
+    # 中心突破点
+    # -------------------------
     center = intersections.get("center", []) or intersections.get("中心", []) or []
-    show_center, more_center = clamp_list(center, 6 if mode == "share" else 10)
+    show_center, more_center = clamp_list(center, center_n_share if mode == "share" else min(10, show_n_full))
     center_lines = [f"• {one_line(x, 18)}" for x in show_center]
     if more_center > 0:
         center_lines.append(f"… {more_center} more" if is_en else f"… 还有 {more_center} 条")
-    center_text = center_title + "\n" + ("\n".join(center_lines) if center_lines else ("(empty)" if is_en else "（空）"))
+
+    center_text = center_title + "\n" + (
+        "\n".join(center_lines) if center_lines
+        else ("(Fill your breakthrough list)" if is_en else "（请先填写突破点清单）")
+    )
+
     ax.text(
         0.0, 0.20,
         center_text,
         ha="center", va="center",
         fontsize=13 if mode == "share" else 12,
         fontweight="bold",
-        bbox=dict(boxstyle="round,pad=0.55,rounding_size=0.15", facecolor="white", edgecolor="#333", linewidth=1.1, alpha=0.84),
-        zorder=6,
+        bbox=dict(
+            boxstyle="round,pad=0.55,rounding_size=0.15",
+            facecolor="white",
+            edgecolor="#333",
+            linewidth=1.1,
+            alpha=0.84,
+        ),
+        zorder=10,
     )
 
-    # ✅ Full：补齐 梦想/天赋/责任 清单 + 三个两两交集
+    # -------------------------
+    # Full 模式：三清单 + 三个两两交集
+    # -------------------------
     if mode == "full":
         def _list_block(title, items, x, y):
             show, more = clamp_list(items, 7)
@@ -270,17 +370,23 @@ def render_life_circle_png(
                 x, y, txt,
                 ha="center", va="center",
                 fontsize=10,
-                bbox=dict(boxstyle="round,pad=0.30,rounding_size=0.12", facecolor="white", edgecolor="#999", linewidth=0.8, alpha=0.55),
-                zorder=5
+                bbox=dict(
+                    boxstyle="round,pad=0.30,rounding_size=0.12",
+                    facecolor="white",
+                    edgecolor="#999",
+                    linewidth=0.8,
+                    alpha=0.55,
+                ),
+                zorder=9,
             )
 
         _list_block("Responsibility List" if is_en else "责任清单", resp_items, Resp_xy[0], Resp_xy[1] + 0.75)
         _list_block("Dream List" if is_en else "梦想清单", dream_items, Dream_xy[0] - 0.25, Dream_xy[1] + 0.15)
         _list_block("Talent List" if is_en else "天赋清单", talent_items, Talent_xy[0] + 0.25, Talent_xy[1] + 0.15)
 
-        resp_dream = _pick_intersection_list(intersections, ["resp_dream", "责任∩梦想", "责任_梦想", "rd"])
-        resp_talent = _pick_intersection_list(intersections, ["resp_talent", "责任∩天赋", "责任_天赋", "rt"])
-        dream_talent = _pick_intersection_list(intersections, ["dream_talent", "梦想∩天赋", "梦想_天赋", "dt"])
+        resp_dream = _pick_intersection_list(intersections, ["resp_dream", "责任∩梦想", "rd"])
+        resp_talent = _pick_intersection_list(intersections, ["resp_talent", "责任∩天赋", "rt"])
+        dream_talent = _pick_intersection_list(intersections, ["dream_talent", "梦想∩天赋", "dt"])
 
         def _fmt_block(title, items, max_n=4):
             show, more = clamp_list(items, max_n)
@@ -295,7 +401,7 @@ def render_life_circle_png(
             ha="center", va="center",
             fontsize=9,
             bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#AAA", alpha=0.60),
-            zorder=7
+            zorder=11,
         )
         ax.text(
             3.10, 0.95,
@@ -303,7 +409,7 @@ def render_life_circle_png(
             ha="center", va="center",
             fontsize=9,
             bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#AAA", alpha=0.60),
-            zorder=7
+            zorder=11,
         )
         ax.text(
             0.0, -2.75,
@@ -311,7 +417,7 @@ def render_life_circle_png(
             ha="center", va="center",
             fontsize=9,
             bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#AAA", alpha=0.60),
-            zorder=7
+            zorder=11,
         )
 
     buf = io.BytesIO()
@@ -324,22 +430,26 @@ def render_life_circle_png(
     plt.close(fig)
     return b
 
+
 # =======================
-# 36×10 Excel 导出（你原逻辑保留）
+# 36×10 Excel 导出：6×6 大表
 # =======================
 def build_36x10_excel() -> bytes:
     periods = get_sprints()
     if not periods:
         return b""
 
+    # 兜底：过滤掉日期为空的 sprint
     safe_periods = []
     for p in periods:
         if getattr(p, "start_date", None) is None or getattr(p, "end_date", None) is None:
             continue
         safe_periods.append(p)
+
     if not safe_periods:
         return b"__BAD_SPRINT_DATES__"
-    periods = safe_periods
+
+    periods = sorted(safe_periods, key=lambda x: x.sprint_no)
 
     BLOCK_COLS = 3
     BLOCK_ROWS = 10
@@ -348,7 +458,7 @@ def build_36x10_excel() -> bytes:
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "36×10 Plan" if st.session_state.lang == "en" else "36×10 自我提升计划"
+    ws.title = "36×10 Plan" if st.session_state.get("lang","zh") == "en" else "36×10 自我提升计划"
 
     thin = Side(style="thin", color="D0D0D0")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -359,23 +469,14 @@ def build_36x10_excel() -> bytes:
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     align_left = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
-    # fill_header = PatternFill("solid", fgColor="6C5CE7")
-
-
-    # # 修正上面一行：openpyxl 不接受 fg cell 这种写法，改回正常
-    # fill_obj = PatternFill("solid", fgColor="F7F7FB")
-    # fill_task = PatternFill("solid", fgColor="FFFFFF")
-    # fill_done = PatternFill("solid", fgColor="E9F7EF")
-    
     fill_header = PatternFill("solid", fgColor="6C5CE7")
     fill_obj = PatternFill("solid", fgColor="F7F7FB")
     fill_task = PatternFill("solid", fgColor="FFFFFF")
     fill_done = PatternFill("solid", fgColor="E9F7EF")
 
-
     total_cols = 6 * (BLOCK_COLS + GAP_COL)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
-    title_text = "36×10 Growth Plan (6×6 Master Sheet)" if st.session_state.lang == "en" else "36×10 自我提升计划（6×6 大表）"
+    title_text = "36×10 Growth Plan (6×6 Master Sheet)" if st.session_state.get("lang","zh") == "en" else "36×10 自我提升计划（6×6 大表）"
     tcell = ws.cell(row=1, column=1, value=title_text)
     tcell.font = Font(name="Microsoft YaHei", bold=True, size=16, color="1F1F1F")
     tcell.alignment = Alignment(horizontal="center", vertical="center")
@@ -387,8 +488,6 @@ def build_36x10_excel() -> bytes:
             ws.column_dimensions[letter].width = 3
         else:
             ws.column_dimensions[letter].width = 18
-
-    periods_sorted = sorted(periods, key=lambda x: x.sprint_no)
 
     def top_left_of_block(sprint_no: int):
         idx = sprint_no - 1
@@ -406,16 +505,16 @@ def build_36x10_excel() -> bytes:
             for cc in range(c0, c1 + 1):
                 ws.cell(rr, cc).border = border
 
-    deliverable_label = "Deliverables:\n" if st.session_state.lang == "en" else "交付物/成果：\n"
+    deliverable_label = "Deliverables:\n" if st.session_state.get("lang","zh") == "en" else "交付物/成果：\n"
 
-    for sp in periods_sorted:
+    for sp in periods:
         r0, c0 = top_left_of_block(sp.sprint_no)
         r1 = r0 + BLOCK_ROWS - 1
         c1 = c0 + BLOCK_COLS - 1
 
         theme = (sp.theme or "").strip()
-        header_text = theme if theme else ("Untitled" if st.session_state.lang == "en" else "未命名主题")
-        header_text = (f"Cycle {sp.sprint_no} | {header_text}" if st.session_state.lang == "en"
+        header_text = theme if theme else ("Untitled" if st.session_state.get("lang","zh") == "en" else "未命名主题")
+        header_text = (f"Cycle {sp.sprint_no} | {header_text}" if st.session_state.get("lang","zh") == "en"
                        else f"第{sp.sprint_no}周期｜{header_text}")
 
         merge_block(r0, c0, 1, BLOCK_COLS)
@@ -426,7 +525,7 @@ def build_36x10_excel() -> bytes:
         ws.row_dimensions[r0].height = 26
 
         obj = (sp.objective or "").strip()
-        obj_text = obj if obj else ("(Not set)" if st.session_state.lang == "en" else "（未填写交付物）")
+        obj_text = obj if obj else ("(Not set)" if st.session_state.get("lang","zh") == "en" else "（未填写交付物）")
         merge_block(r0 + 1, c0, 2, BLOCK_COLS)
         oc = ws.cell(r0 + 1, c0, f"{deliverable_label}{obj_text}")
         oc.font = font_body
@@ -452,13 +551,14 @@ def build_36x10_excel() -> bytes:
             else:
                 cell = ws.cell(rr, c0, "")
                 cell.fill = fill_task
+
             cell.font = font_body
             cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
             ws.row_dimensions[rr].height = 20
 
         rr_hint = r0 + 9
         merge_block(rr_hint, c0, 1, BLOCK_COLS)
-        hint = (f"… {more} more tasks" if st.session_state.lang == "en" else f"…还有 {more} 条任务") if more > 0 else ""
+        hint = (f"… {more} more tasks" if st.session_state.get("lang","zh") == "en" else f"…还有 {more} 条任务") if more > 0 else ""
         hint_cell = ws.cell(rr_hint, c0, hint)
         hint_cell.font = Font(name="Microsoft YaHei", size=9, color="666666", italic=True)
         hint_cell.alignment = Alignment(horizontal="right", vertical="center")
@@ -472,6 +572,7 @@ def build_36x10_excel() -> bytes:
     wb.save(buf)
     return buf.getvalue()
 
+
 # =======================
 # 读取数据
 # =======================
@@ -484,33 +585,27 @@ dream = safe_load_json(dig.dream_json)
 inter = safe_load_json(dig.intersections_json)
 
 name = (get_meta(inter).get("name", "") or "").strip()
+dream_items = unique_keep_order(sum((dream or {}).values(), []))
+resp_items = unique_keep_order(sum((resp or {}).values(), []))
+talent_items = unique_keep_order(sum((talent or {}).values(), []))
 
-# ✅ 展开四象限：把 dict 的 values 扁平化（去重保序）
-def flatten_quadrant_dict(d: dict) -> list:
-    if not isinstance(d, dict):
-        return []
-    vals = []
-    for v in d.values():
-        if isinstance(v, list):
-            vals.extend(v)
-    return unique_keep_order(vals)
-
-dream_items = flatten_quadrant_dict(dream)
-resp_items = flatten_quadrant_dict(resp)
-talent_items = flatten_quadrant_dict(talent)
 
 # =======================
-# UI：海报 + Excel
+# UI：海报
 # =======================
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(t("poster_section"))
-st.caption("Share mode is great for posting; Full mode is better for archive/review." if st.session_state.lang=="en" else "分享版适合发布；完整版适合存档/复盘。")
+st.caption(
+    ("分享版适合发布；完整版适合存档/复盘。" if st.session_state.get("lang","zh") == "zh"
+     else "Share mode is great for posting; Full mode is better for archive/review.")
+)
 
 mode_ui = st.radio(
     t("mode_label"),
     [t("mode_share"), t("mode_full")],
     horizontal=True,
     index=0,
+    key="export_mode",
 )
 mode_key = "share" if mode_ui == t("mode_share") else "full"
 
@@ -524,8 +619,10 @@ preview_png = render_life_circle_png(
     intersections=inter,
 )
 
-# 兼容旧版 streamlit：不用 use_container_width
-st.image(preview_png, width=1100)
+if preview_png:
+    st.image(preview_png, width=1100)
+else:
+    st.error("海报渲染失败：没有生成图片数据。")
 
 suffix = "share" if mode_key == "share" else "full"
 base_name = f"{(name or 'YourName')}_2026_LifeCircle_{suffix}"
@@ -558,32 +655,36 @@ with c4:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+# =======================
+# UI：Excel
+# =======================
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(t("excel_section"))
 st.caption(
-    "Each block is a 10-day cycle: header=theme, then deliverables, then tasks (with done status)."
-    if st.session_state.lang == "en"
-    else "每格一个10天行动周期：表头=主题，下面=交付物，再下面=任务列表（含完成状态）。"
+    ("每格一个10天行动周期：表头=主题，下面=交付物，再下面=任务列表（含完成状态）。" if st.session_state.get("lang","zh") == "zh"
+     else "Each block is a 10-day cycle: header=theme, then deliverables, then tasks (with done status).")
 )
 
 xlsx_bytes = build_36x10_excel()
 
 if xlsx_bytes == b"__BAD_SPRINT_DATES__":
     st.error(
-        "Some 36×10 cycles have missing dates. Go to page ② and Generate/Rebuild 36×10, then return."
-        if st.session_state.lang == "en"
-        else "检测到 36×10 周期日期为空/异常。请到「② 36×10」页面点击“生成/重建 36×10”，然后回来再导出。"
+        "检测到 36×10 周期日期为空/异常。请到「② 36×10」页面点击“生成/重建 36×10”，然后回来再导出。"
+        if st.session_state.get("lang","zh") == "zh"
+        else
+        "Some 36×10 cycles have missing dates. Go to page ② and click “Generate/Rebuild 36×10”, then return to export."
     )
 elif not xlsx_bytes:
     st.info(
+        "还没有生成 36×10 行动周期。请先到「② 36×10」页面生成周期，再回来导出。"
+        if st.session_state.get("lang","zh") == "zh"
+        else
         "No 36×10 cycles yet. Please generate them on page ② first."
-        if st.session_state.lang == "en"
-        else "还没有生成 36×10 行动周期。请先到「② 36×10」页面生成周期，再回来导出。"
     )
 else:
     xlsx_name = (
         f"{(name or 'YourName')}_36x10_plan.xlsx"
-        if st.session_state.lang == "en"
+        if st.session_state.get("lang","zh") == "en"
         else f"{(name or 'YourName')}_36x10_自我提升计划.xlsx"
     )
     st.download_button(
