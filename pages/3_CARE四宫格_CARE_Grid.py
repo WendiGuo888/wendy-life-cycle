@@ -10,7 +10,7 @@ st.set_page_config(
 
 from i18n import init_i18n, lang_selector, t
 
-from db import (
+from store import (
     get_or_create_profile,
     list_care_records,
     add_care_record,
@@ -206,3 +206,4 @@ for r in filtered:
                 st.success("Added to cycle ✅" if st.session_state.lang == "en" else "已添加到周期 ✅")
 
     st.markdown("</div>", unsafe_allow_html=True)
+
