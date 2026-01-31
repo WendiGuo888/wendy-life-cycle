@@ -369,8 +369,11 @@ else:
 # 底部提示
 # =========================================================
 st.info(
-    TT(
-        "提示：如果你想让粉丝/朋友内测且不串数据，当前 store 版已是「每个访问者独立 Session」。想长期保存，建议在「备份」页让用户导出 JSON 自己存。",
-        "Tip: For beta testing without data leakage, this store version is session-isolated per visitor. For long-term saving, provide JSON export in Backup page.",
-    )
+    "📣 当前为「粉丝内测版」：每位访问者的数据仅保存在本次浏览器 Session 中，刷新/换设备可能会丢失。\n\n"
+    "✅ 建议使用方式：\n"
+    "1）完成填写后，先在【数据备份 / Backup】下载 JSON 备份；\n"
+    "2）或直接在【导出中心】立刻导出海报图片 + 36×10 Excel 保存到本地。\n\n"
+    "（后续正式版会上线账号/长期保存功能）"
 )
+
+
