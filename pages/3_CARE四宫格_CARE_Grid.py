@@ -15,6 +15,14 @@ from store import (
     list_tasks_for_sprint,
     add_task_to_sprint_unique,
 )
+def _is_dict(x):
+    return isinstance(x, dict)
+
+def _get(obj, key, default=None):
+    """兼容 dict / ORM / dataclass：dict用get；对象用getattr"""
+    if _is_dict(obj):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 # -----------------------
 # set_page_config（必须在 st.xxx 前）
@@ -100,19 +108,42 @@ def rebuild_tags_from_history():
 # -----------------------
 # 36×10：查 “这条 CARE 是否已被分配为任务” + 完成状态
 # -----------------------
+def _get(obj, key, default=None):
+    """兼容 dict / ORM：dict 用 get；对象用 getattr"""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
 def find_assignment_by_care_id(care_id: str):
     """
     返回 (sprint_no, done, title) 或 None
+    同时兼容：
+    - store.py dict
+    - db.py ORM
+    - dataclass
     """
     sprints = get_sprints() or []
     if not sprints:
         return None
+
+    care_id_str = str(care_id)
+
     for sp in sprints:
-        sp_no = sp.get("sprint_no")
-        for t in (list_tasks_for_sprint(int(sp_no)) or []):
-            if str(t.get("source_care_id") or "") == str(care_id):
-                return (int(sp_no), bool(t.get("done")), t.get("title", ""))
+        sp_no = _get(sp, "sprint_no", None)
+        if sp_no is None:
+            continue
+
+        tasks = list_tasks_for_sprint(int(sp_no)) or []
+        for t in tasks:
+            source_id = _get(t, "source_care_id", "")
+            if str(source_id) == care_id_str:
+                done = bool(_get(t, "done", False))
+                title = _get(t, "title", "") or ""
+                return (int(sp_no), done, title)
+
     return None
+
+
 
 
 # -----------------------
@@ -343,7 +374,7 @@ else:
                     if not title:
                         st.warning(TT("这条记录的 Action 为空，无法分配。", "Action is empty — cannot assign."))
                     else:
-                        add_task_to_sprint_unique(int(sp_no_sel), title, source_care_id=str(care_id))
+                        add_task_to_sprint_unique(int(sp_no_sel), title, source_care_id=care_id)
                         st.success(TT(f"已分配到 周期 {sp_no_sel}", f"Assigned to Cycle {sp_no_sel}"))
                         st.rerun()
 
@@ -358,3 +389,4 @@ else:
         st.divider()
 
 st.markdown("</div>", unsafe_allow_html=True)
+
