@@ -32,25 +32,6 @@ lang_selector()
 def TT(zh: str, en: str) -> str:
     return zh if st.session_state.get("lang", "zh") == "zh" else en
 
-st.markdown(
-    """
-<style>
-.block-container { padding-top: 1.2rem; padding-bottom: 2.0rem; max-width: 1180px; }
-.card {
-  background:#fff; border-radius:16px; padding:18px 18px; margin-bottom:14px;
-  border:1px solid rgba(0,0,0,0.06); box-shadow:0 10px 24px rgba(0,0,0,0.04);
-}
-.small{color:#666;font-size:13px;}
-.badge{
-  display:inline-block;padding:2px 10px;border-radius:999px;
-  border:1px solid rgba(0,0,0,0.08);background:rgba(0,0,0,0.03);
-  font-size:12px;margin-right:8px;margin-bottom:6px;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
 def _norm(s: str) -> str:
     return (s or "").strip()
 
@@ -65,13 +46,70 @@ def ensure_current_cycle():
         st.session_state["current_cycle_no"] = int(st.session_state["current_cycle_no"])
     except Exception:
         st.session_state["current_cycle_no"] = 1
-    if st.session_state["current_cycle_no"] < 1:
-        st.session_state["current_cycle_no"] = 1
-    if st.session_state["current_cycle_no"] > 36:
-        st.session_state["current_cycle_no"] = 36
+    st.session_state["current_cycle_no"] = max(1, min(36, st.session_state["current_cycle_no"]))
 
 ensure_current_cycle()
 
+# -----------------------
+# 样式
+# -----------------------
+st.markdown(
+    """
+<style>
+.block-container { padding-top: 1.2rem; padding-bottom: 2.0rem; max-width: 1180px; }
+
+.card {
+  background:#fff; border-radius:16px; padding:18px 18px; margin-bottom:14px;
+  border:1px solid rgba(0,0,0,0.06); box-shadow:0 10px 24px rgba(0,0,0,0.04);
+}
+
+.small{color:#666;font-size:13px;}
+
+.badge{
+  display:inline-block;padding:2px 10px;border-radius:999px;
+  border:1px solid rgba(0,0,0,0.08);background:rgba(0,0,0,0.03);
+  font-size:12px;margin-right:8px;margin-bottom:6px;
+}
+
+/* 6x6 卡片 */
+.grid-wrap{ margin-top: 6px; }
+.cycle-card{
+  border:1px solid rgba(0,0,0,0.06);
+  border-radius:14px;
+  padding:12px 12px;
+  background:#fff;
+  box-shadow:0 8px 18px rgba(0,0,0,0.03);
+  min-height: 118px;
+}
+.cycle-top{
+  display:flex; align-items:center; justify-content:space-between;
+  font-weight: 800; font-size: 14px;
+}
+.cycle-sub{ color:#666; font-size: 12px; margin-top: 4px; }
+.cycle-theme{ font-size: 13px; margin-top: 8px; font-weight: 700; }
+.cycle-theme span{ font-weight: 500; color:#444; }
+.cycle-progress{ margin-top: 8px; font-size: 12px; color:#444; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+def _progress_for_sp(sp: dict) -> tuple[int, int]:
+    tasks = sp.get("tasks", []) or []
+    total = len(tasks)
+    done = sum(1 for t in tasks if bool(t.get("done", False)))
+    return done, total
+
+def _theme_preview(sp: dict) -> str:
+    t = _norm(sp.get("theme", ""))
+    if not t:
+        return TT("未填写主题", "No theme yet")
+    # 控制长度一行
+    return t[:22] + ("…" if len(t) > 22 else "")
+
+# -----------------------
+# 页面头
+# -----------------------
 st.title(TT("② 36×10：自我提升计划（10天行动周期）", "② 36×10: Growth Plan (10-day cycles)"))
 st.caption(
     TT(
@@ -87,9 +125,7 @@ st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("A｜生成/重建 36×10 周期", "A | Generate / Rebuild 36×10"))
 
 if not sprints_ready():
-    st.warning(
-        TT("你还没有生成 36×10 周期。请选择开始日期并生成。", "No cycles yet. Pick a start date and generate.")
-    )
+    st.warning(TT("你还没有生成 36×10 周期。请选择开始日期并生成。", "No cycles yet. Pick a start date and generate."))
 else:
     st.info(
         TT("已生成 36×10 周期。如需重新开始，可重建（会清空旧周期主题与任务）。",
@@ -98,39 +134,36 @@ else:
 
 start = st.date_input(TT("请选择开始日期", "Pick a start date"), value=date.today(), key="gp_start_date")
 
-col1, col2 = st.columns(2)
-with col1:
-    if st.button(TT("🚀 生成/重建 36×10（会清空旧周期与任务）", "🚀 Generate/Rebuild 36×10 (clears old data)"),
-                 use_container_width=True, key="gp_rebuild_btn"):
-        regenerate_sprints(start)
-        st.success(TT("已生成 36 个周期 ✅", "Generated 36 cycles ✅"))
-        st.session_state["current_cycle_no"] = 1
-        st.rerun()
-
-with col2:
-    st.markdown('<div class="small">', unsafe_allow_html=True)
-    st.write(TT("提示：生成后，你可以从年度挖掘或 CARE 一键分配任务到某个周期。",
-                "Tip: After generating, you can assign tasks from Annual Planning or CARE into cycles."))
-    st.markdown("</div>", unsafe_allow_html=True)
+if st.button(
+    TT("🚀 生成/重建 36×10（会清空旧周期与任务）", "🚀 Generate/Rebuild 36×10 (clears old data)"),
+    use_container_width=True,
+    key="gp_rebuild_btn",
+):
+    regenerate_sprints(start)
+    st.success(TT("已生成 36 个周期 ✅", "Generated 36 cycles ✅"))
+    st.session_state["current_cycle_no"] = 1
+    st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
 if not sprints_ready():
     st.stop()
 
-# -----------------------
-# B | Overview
-# -----------------------
 sps = get_sprints()
-done_cnt = 0
+
+# -----------------------
+# B | 总览 + 6×6 小卡片
+# -----------------------
 task_cnt = 0
+done_cnt = 0
 for sp in sps:
-    tasks = sp.get("tasks", []) or []
-    task_cnt += len(tasks)
-    done_cnt += sum(1 for t in tasks if bool(t.get("done", False)))
+    d, t = _progress_for_sp(sp)
+    done_cnt += d
+    task_cnt += t
 
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader(TT("B｜总览", "B | Overview"))
+st.subheader(TT("B｜总览（小卡片 6×6）", "B | Overview (6×6 cards)"))
+
 st.markdown(
     f'<span class="badge">{TT("周期数","Cycles")}: 36</span>'
     f'<span class="badge">{TT("任务","Tasks")}: {task_cnt}</span>'
@@ -138,14 +171,53 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# 快速跳转
-jump_no = st.number_input(TT("跳转到周期编号（1-36）", "Jump to cycle (1-36)"),
-                          min_value=1, max_value=36, value=int(st.session_state["current_cycle_no"]),
-                          key="jump_cycle_no")
+# 可选：快速跳转（数字）
+jump_no = st.number_input(
+    TT("跳转到周期编号（1-36）", "Jump to cycle (1-36)"),
+    min_value=1, max_value=36,
+    value=int(st.session_state["current_cycle_no"]),
+    key="jump_cycle_no"
+)
 if st.button(TT("跳转", "Go"), key="jump_go"):
     st.session_state["current_cycle_no"] = int(jump_no)
     st.rerun()
 
+st.markdown('<div class="grid-wrap">', unsafe_allow_html=True)
+
+# 6列网格（每行6个）
+for row in range(6):
+    cols = st.columns(6, gap="small")
+    for col_i in range(6):
+        idx = row * 6 + col_i
+        sp = sps[idx]
+        no = int(sp.get("sprint_no", idx + 1))
+        start_s = sp.get("start_date", "")
+        end_s = sp.get("end_date", "")
+        theme = _theme_preview(sp)
+        d, t = _progress_for_sp(sp)
+        is_active = (no == int(st.session_state["current_cycle_no"]))
+
+        with cols[col_i]:
+            # 卡片主体（HTML）
+            st.markdown(
+                f"""
+<div class="cycle-card">
+  <div class="cycle-top">
+    <div>{TT("周期","Cycle")} {no}{' · ' + TT('当前','Current') if is_active else ''}</div>
+  </div>
+  <div class="cycle-sub">{start_s} ~ {end_s}</div>
+  <div class="cycle-theme">{TT("主题","Theme")}: <span>{theme}</span></div>
+  <div class="cycle-progress">{TT("进度","Progress")}: {d}/{t}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            # 按钮放在卡片下方（更稳定）
+            if st.button(TT("查看", "Open"), key=f"open_cycle_{no}", use_container_width=True):
+                st.session_state["current_cycle_no"] = int(no)
+                st.rerun()
+
+st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # -----------------------
@@ -193,8 +265,8 @@ st.divider()
 
 # 任务清单
 st.subheader(TT("任务清单", "Tasks"))
-
 tasks = list_tasks_for_sprint(no) or []
+
 if not tasks:
     st.info(TT("暂无任务。你可以：1）从年度挖掘/CARE 分配；2）在这里新增任务。", "No tasks yet. Assign from Annual/CARE or add below."))
 else:
@@ -211,8 +283,10 @@ else:
                 toggle_task_done(tid, new_done)
                 st.rerun()
             if src:
-                st.markdown(f'<span class="badge">from CARE</span><span class="badge">care_id={src}</span>', unsafe_allow_html=True)
-
+                st.markdown(
+                    f'<span class="badge">from CARE</span><span class="badge">care_id={src}</span>',
+                    unsafe_allow_html=True
+                )
         with right:
             ev = st.text_input(TT("证据/备注", "Evidence/Notes"),
                                value=t.get("evidence", ""), key=f"ev_{tid}")
@@ -238,6 +312,8 @@ if add_btn:
 st.markdown("</div>", unsafe_allow_html=True)
 
 st.info(
-    TT("下一步：去「④ 导出中心」导出海报与 6×6 Excel；也建议在「备份」下载 JSON 以防浏览器会话丢失。",
-       "Next: Export poster & 6×6 Excel in page ④; also download JSON backup to avoid session loss.")
+    TT(
+        "下一步：去「④ 导出中心」导出海报与 6×6 Excel；也建议在「备份」下载 JSON 以防浏览器会话丢失。",
+        "Next: Export poster & 6×6 Excel in page ④; also download JSON backup to avoid session loss."
+    )
 )
