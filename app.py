@@ -3,7 +3,9 @@ import streamlit as st
 from i18n import init_i18n, lang_selector, t
 
 # 必须最先执行：设置首页 Tab 名（不会显示 Streamlit）
-st.set_page_config(page_title="Home | Wendy · Bright Future", page_icon="🌱", layout="wide")
+
+st.set_page_config(page_title="Home | Wendy · Bright Future", page_icon="🌱", layout="centered")
+
 
 
 init_i18n(default="zh")
