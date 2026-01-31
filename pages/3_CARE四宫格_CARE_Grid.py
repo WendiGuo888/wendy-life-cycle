@@ -8,7 +8,12 @@ from i18n import init_i18n, lang_selector
 from store import (
     list_care_records,
     add_care_record,
+    update_care_record,
     delete_care_record,
+    # 36×10 联动
+    get_sprints,
+    list_tasks_for_sprint,
+    add_task_to_sprint_unique,
 )
 
 # -----------------------
@@ -45,66 +50,92 @@ st.markdown(
     box-shadow: 0 10px 24px rgba(0,0,0,0.04);
 }
 .small { color:#666; font-size: 13px; }
+.badge {
+    display:inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(0,0,0,0.08);
+    background: rgba(0,0,0,0.03);
+    font-size: 12px;
+    margin-right: 8px;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 # -----------------------
-# Session 内的 Vow Tag 管理（不依赖年度挖掘）
+# Vow Tag：本页自增长（不依赖年度挖掘）
 # -----------------------
+def _norm(s: str) -> str:
+    return (s or "").strip()
+
 def ensure_vow_store():
     if "vow_tags" not in st.session_state:
         st.session_state["vow_tags"] = []  # List[str]
 
-def norm_tag(x: str) -> str:
-    return (x or "").strip()
-
 def add_tag_if_new(tag: str):
     ensure_vow_store()
-    tag = norm_tag(tag)
+    tag = _norm(tag)
     if not tag:
         return
     if tag not in st.session_state["vow_tags"]:
-        st.session_state["vow_tags"].insert(0, tag)  # 新的放前面
+        st.session_state["vow_tags"].insert(0, tag)
+
+def rebuild_tags_from_history():
+    ensure_vow_store()
+    # 从历史记录里把 vow_tag/ tags 都回填成候选（更像产品）
+    for r in (list_care_records() or []):
+        vt = _norm(r.get("vow_tag", ""))
+        if vt:
+            add_tag_if_new(vt)
+        # 可选：把 tags 里的单词也回收为 vow 候选（你也可以注释掉）
+        tg = _norm(r.get("tags", ""))
+        if tg:
+            for x in [t.strip() for t in tg.split(",") if t.strip()]:
+                # 不强行塞太多：只收短标签
+                if len(x) <= 10:
+                    add_tag_if_new(x)
+
+# -----------------------
+# 36×10：查 “这条 CARE 是否已被分配为任务” + 完成状态
+# -----------------------
+def find_assignment_by_care_id(care_id: str):
+    """
+    返回 (sprint_no, done, title) 或 None
+    """
+    sprints = get_sprints() or []
+    if not sprints:
+        return None
+    for sp in sprints:
+        sp_no = sp.get("sprint_no")
+        for t in (list_tasks_for_sprint(int(sp_no)) or []):
+            if str(t.get("source_care_id") or "") == str(care_id):
+                return (int(sp_no), bool(t.get("done")), t.get("title", ""))
+    return None
 
 
 # -----------------------
-# 顶部
+# 页面头
 # -----------------------
 st.title(TT("③ CARE 记录", "③ CARE Records"))
 st.caption(
     TT(
-        "把灵感转成可执行行动，并用「愿力关键词」串起来，方便后续复盘与规划。",
-        "Turn inspiration into an action. Use a Vow Tag to connect your records for review & planning.",
+        "把灵感转成可执行行动，并用「愿力关键词」把行动串成长期主题。",
+        "Turn inspiration into action. Use a Vow Tag to connect records into long-term themes.",
     )
 )
 
+rebuild_tags_from_history()
+vow_options = [TT("（不设置）", "(None)")] + (st.session_state.get("vow_tags", []) or [])
+
 # -----------------------
-# A | 新增 CARE
+# A | 新增
 # -----------------------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("新增 CARE 记录", "Add a CARE Record"))
 
-ensure_vow_store()
-
-# 自动从历史记录里“反哺”出 vow tag（如果用户已经用过）
-# 这样不用年度挖掘也能越来越聪明
-existing = list_care_records() or []
-for r in existing:
-    vt = norm_tag(r.get("vow_tag", ""))
-    if vt:
-        add_tag_if_new(vt)
-
-# 下拉选项
-vow_options = st.session_state.get("vow_tags", [])
-if not vow_options:
-    vow_options = [TT("（还没有标签，建议先手动输入一个）", "(No tags yet — type one below)")]
-    has_real_tags = False
-else:
-    has_real_tags = True
-
-with st.form("care_form", clear_on_submit=True):
+with st.form("care_add_form", clear_on_submit=True):
     capture = st.text_area(
         TT("Capture/Source（必填：原文/链接）", "Capture/Source (required: text/link)"),
         height=80,
@@ -121,7 +152,6 @@ with st.form("care_form", clear_on_submit=True):
     with c2:
         ego_drive = st.text_input(TT("Ego drive（内在驱动力）", "Ego drive (inner motivation)"))
 
-    # --- Vow Tag：下拉 + 手动输入 ---
     st.markdown("**" + TT("Vow Tag（愿力关键词）", "Vow Tag") + "**")
     colA, colB = st.columns([2, 3])
     with colA:
@@ -129,7 +159,6 @@ with st.form("care_form", clear_on_submit=True):
             TT("从已有标签选择（可选）", "Pick an existing tag (optional)"),
             options=vow_options,
             index=0,
-            disabled=(not has_real_tags),
         )
     with colB:
         vow_new = st.text_input(
@@ -143,25 +172,24 @@ with st.form("care_form", clear_on_submit=True):
     submitted = st.form_submit_button(TT("➕ 添加 CARE", "➕ Add CARE"))
 
 if submitted:
-    # ✅ 必填校验：不要用 if not score（0 会被误判）
-    if not (capture or "").strip():
+    if not _norm(capture):
         st.warning(TT("请填写 Capture/Source。", "Please fill in Capture/Source."))
-    elif not (action or "").strip():
+    elif not _norm(action):
         st.warning(TT("请填写 Action。", "Please fill in Action."))
     else:
-        final_vow = norm_tag(vow_new) if norm_tag(vow_new) else (norm_tag(vow_pick) if has_real_tags else "")
+        final_vow = _norm(vow_new) if _norm(vow_new) else ("" if vow_pick in [TT("（不设置）","(None)")] else _norm(vow_pick))
         if final_vow:
             add_tag_if_new(final_vow)
 
         add_care_record(
-            capture_source=capture.strip(),
-            cognition=(cognition or "").strip(),
-            action=action.strip(),
-            relationship=(relationship or "").strip(),
-            ego_drive=(ego_drive or "").strip(),
+            capture_source=_norm(capture),
+            cognition=_norm(cognition),
+            action=_norm(action),
+            relationship=_norm(relationship),
+            ego_drive=_norm(ego_drive),
             vow_tag=final_vow,
             relevance_score=int(score),
-            tags=(tags or "").strip(),
+            tags=_norm(tags),
         )
         st.success(TT("已添加 ✅", "Added ✅"))
         st.rerun()
@@ -170,7 +198,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 
 # -----------------------
-# B | 列表
+# B | 列表 + 可编辑 + 分配到 36×10
 # -----------------------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("记录列表", "Records"))
@@ -179,7 +207,6 @@ filter_strong = st.checkbox(
     TT("默认只看强相关（评分 ≥ 4）", "Show only high relevance (score ≥ 4)"),
     value=True,
 )
-
 kw = st.text_input(TT("关键词搜索", "Keyword search"), placeholder=TT("输入任意关键词…", "Type any keyword..."))
 vow_filter = st.selectbox(
     TT("Vow Tag 筛选", "Filter by Vow Tag"),
@@ -192,12 +219,10 @@ records = list_care_records() or []
 def match(r: dict) -> bool:
     if filter_strong and int(r.get("relevance_score", 0)) < 4:
         return False
-
     if vow_filter not in [TT("（全部）", "(All)")]:
-        if norm_tag(r.get("vow_tag", "")) != norm_tag(vow_filter):
+        if _norm(r.get("vow_tag", "")) != _norm(vow_filter):
             return False
-
-    if kw.strip():
+    if _norm(kw):
         blob = " ".join([
             str(r.get("capture_source","")),
             str(r.get("cognition","")),
@@ -216,27 +241,120 @@ records_show = [r for r in records if match(r)]
 if not records_show:
     st.info(TT("暂无记录。你可以先添加一条 CARE。", "No records yet. Add your first CARE above."))
 else:
-    for r in records_show:
-        top = f"⭐ {r.get('relevance_score',0)}  ·  {r.get('vow_tag','') or TT('（无标签）','(no tag)')}"
-        st.markdown(f"**{top}**")
-        st.write(r.get("action",""))
-        with st.expander(TT("展开详情", "Details"), expanded=False):
-            st.markdown(f"**Capture/Source**\n\n{r.get('capture_source','')}")
-            if r.get("cognition"):
-                st.markdown(f"**Cognition**\n\n{r.get('cognition','')}")
-            cols = st.columns(2)
-            with cols[0]:
-                st.markdown(f"**Relationship**\n\n{r.get('relationship','')}")
-            with cols[1]:
-                st.markdown(f"**Ego drive**\n\n{r.get('ego_drive','')}")
-            if r.get("tags"):
-                st.markdown(f"**Tags**: {r.get('tags')}")
+    sprints_exist = bool(get_sprints())
 
-            # 删除按钮
-            if st.button(TT("🗑 删除这条", "🗑 Delete"), key=f"del_{r.get('id')}"):
-                delete_care_record(r.get("id"))
+    for r in records_show:
+        care_id = r.get("id")
+        vt = _norm(r.get("vow_tag", "")) or TT("（无标签）", "(no tag)")
+        score = int(r.get("relevance_score", 0))
+
+        assign_info = find_assignment_by_care_id(str(care_id))
+        if assign_info:
+            sp_no, done, task_title = assign_info
+            badge = f"{TT('已分配','Assigned')} · {TT('周期','Cycle')} {sp_no} · {'✅' if done else '⬜'}"
+        else:
+            badge = TT("未分配到 36×10", "Not assigned to 36×10")
+
+        st.markdown(
+            f'<span class="badge">⭐ {score}</span>'
+            f'<span class="badge">{vt}</span>'
+            f'<span class="badge">{badge}</span>',
+            unsafe_allow_html=True
+        )
+
+        # ✅ 列表主行：显示 Action（你要的“行动词组”）
+        st.write(r.get("action", ""))
+
+        with st.expander(TT("展开详情 / 编辑 / 分配", "Details / Edit / Assign"), expanded=False):
+
+            # --------- 编辑区（form）---------
+            with st.form(f"edit_{care_id}"):
+                cap_e = st.text_area("Capture/Source", value=r.get("capture_source",""), height=70)
+                cog_e = st.text_area("Cognition", value=r.get("cognition",""), height=70)
+                act_e = st.text_area("Action", value=r.get("action",""), height=70)
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    rel_e = st.text_input("Relationship", value=r.get("relationship",""))
+                with c2:
+                    ego_e = st.text_input("Ego drive", value=r.get("ego_drive",""))
+
+                # Vow Tag：下拉 + 手动输入
+                st.markdown("**Vow Tag**")
+                colA, colB = st.columns([2, 3])
+                with colA:
+                    vow_opts_now = [TT("（不设置）", "(None)")] + (st.session_state.get("vow_tags", []) or [])
+                    # 尽量把当前值定位到下拉
+                    cur_v = _norm(r.get("vow_tag",""))
+                    idx = 0
+                    if cur_v and cur_v in vow_opts_now:
+                        idx = vow_opts_now.index(cur_v)
+                    vow_pick_e = st.selectbox("Pick", vow_opts_now, index=idx, key=f"pick_{care_id}")
+                with colB:
+                    vow_new_e = st.text_input(TT("输入新标签（可选）","New tag (optional)"), key=f"new_{care_id}")
+
+                score_e = st.slider("Relevance Score", 0, 5, int(r.get("relevance_score",0)), key=f"sc_{care_id}")
+                tags_e = st.text_input("Tags", value=r.get("tags",""), key=f"tg_{care_id}")
+
+                save_edit = st.form_submit_button(TT("保存修改", "Save changes"))
+
+            if save_edit:
+                final_v = _norm(vow_new_e) if _norm(vow_new_e) else ("" if vow_pick_e in [TT("（不设置）","(None)")] else _norm(vow_pick_e))
+                if final_v:
+                    add_tag_if_new(final_v)
+
+                update_care_record(
+                    str(care_id),
+                    capture_source=_norm(cap_e),
+                    cognition=_norm(cog_e),
+                    action=_norm(act_e),
+                    relationship=_norm(rel_e),
+                    ego_drive=_norm(ego_e),
+                    vow_tag=final_v,
+                    relevance_score=int(score_e),
+                    tags=_norm(tags_e),
+                )
+                st.success(TT("已保存 ✅", "Saved ✅"))
+                st.rerun()
+
+            st.divider()
+
+            # --------- 分配到 36×10 ---------
+            if not sprints_exist:
+                st.info(
+                    TT("还没有生成 36×10 周期。请先去「36×10天」页面生成周期。", 
+                       "No 36×10 cycles yet. Please generate them on the 36×10 page first.")
+                )
+            else:
+                st.markdown("**" + TT("把这条行动分配到 36×10", "Assign this action to 36×10") + "**")
+                colX, colY = st.columns([2, 1])
+                with colX:
+                    sp_no_sel = st.selectbox(
+                        TT("选择周期", "Select cycle"),
+                        options=list(range(1, 37)),
+                        index=0,
+                        key=f"sp_{care_id}"
+                    )
+                with colY:
+                    assign_btn = st.button(TT("一键分配", "Assign"), key=f"as_{care_id}")
+
+                if assign_btn:
+                    title = _norm(r.get("action",""))
+                    if not title:
+                        st.warning(TT("这条记录的 Action 为空，无法分配。", "Action is empty — cannot assign."))
+                    else:
+                        add_task_to_sprint_unique(int(sp_no_sel), title, source_care_id=str(care_id))
+                        st.success(TT(f"已分配到 周期 {sp_no_sel}", f"Assigned to Cycle {sp_no_sel}"))
+                        st.rerun()
+
+            st.divider()
+
+            # --------- 删除 ---------
+            if st.button(TT("🗑 删除这条", "🗑 Delete"), key=f"del_{care_id}"):
+                delete_care_record(str(care_id))
                 st.success(TT("已删除", "Deleted"))
                 st.rerun()
+
         st.divider()
 
 st.markdown("</div>", unsafe_allow_html=True)
