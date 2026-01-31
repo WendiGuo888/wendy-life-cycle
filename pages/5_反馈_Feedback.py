@@ -18,8 +18,8 @@ def TT(zh, en):
 st.title(TT("💬 使用反馈", "💬 Feedback"))
 st.caption(
     TT(
-        "你的反馈将直接影响这个产品的下一步迭代，非常感谢参与内测 🙏",
-        "Your feedback directly shapes the next iteration. Thank you for joining the beta 🙏",
+        "你的反馈将直接影响这个产品的下一步迭代，非常感谢参与内测 🙌",
+        "Your feedback directly shapes the next iteration. Thank you for joining the beta 🙌",
     )
 )
 
@@ -53,8 +53,8 @@ st.components.v1.iframe(
 st.markdown("---")
 st.markdown(
     TT(
-        "💚 谢谢你愿意花时间反馈，这对我非常重要。",
-        "💚 Thank you for taking the time to share feedback — it means a lot.",
+        "💚 谢谢你愿意把时间投给这套「成长系统」的共创。你的每一条反馈，都会变成下一次迭代里更清晰的路径，帮助更多人把目标变成行动。",
+        "💚 Thank you for co-creating this growth system with us. Every note you share becomes a clearer path in the next iteration—so more people can turn goals into action.",
     )
 )
 
