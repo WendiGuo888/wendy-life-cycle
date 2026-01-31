@@ -44,13 +44,21 @@ def ensure_state():
         st.session_state["current_cycle_no"] = 1
     if "show_cycle_detail" not in st.session_state:
         st.session_state["show_cycle_detail"] = False
+    if "jump_cycle_no_state" not in st.session_state:
+        st.session_state["jump_cycle_no_state"] = int(st.session_state["current_cycle_no"])
 
+    # clamp
     try:
         st.session_state["current_cycle_no"] = int(st.session_state["current_cycle_no"])
     except Exception:
         st.session_state["current_cycle_no"] = 1
-
     st.session_state["current_cycle_no"] = max(1, min(36, st.session_state["current_cycle_no"]))
+
+    try:
+        st.session_state["jump_cycle_no_state"] = int(st.session_state["jump_cycle_no_state"])
+    except Exception:
+        st.session_state["jump_cycle_no_state"] = int(st.session_state["current_cycle_no"])
+    st.session_state["jump_cycle_no_state"] = max(1, min(36, st.session_state["jump_cycle_no_state"]))
 
 ensure_state()
 
@@ -96,7 +104,7 @@ st.markdown(
 .anchor {
   display:block;
   position:relative;
-  top:-72px; /* 让锚点不被顶部遮挡 */
+  top:-72px;
   visibility:hidden;
 }
 </style>
@@ -122,10 +130,10 @@ def _theme_preview(sp: dict) -> str:
     return t[:22] + ("…" if len(t) > 22 else "")
 
 def open_cycle(no: int):
+    """✅ 不要写 widget 的 key（jump_cycle_no），只写纯状态 key"""
     st.session_state["current_cycle_no"] = int(no)
     st.session_state["show_cycle_detail"] = True
-    # 同步跳转输入框的值（避免用户觉得“没跳”）
-    st.session_state["jump_cycle_no"] = int(no)
+    st.session_state["jump_cycle_no_state"] = int(no)  # 纯状态，不是 widget key
 
 # -----------------------
 # 页面头
@@ -162,6 +170,7 @@ if st.button(
     regenerate_sprints(start)
     st.success(TT("已生成 36 个周期 ✅", "Generated 36 cycles ✅"))
     st.session_state["current_cycle_no"] = 1
+    st.session_state["jump_cycle_no_state"] = 1
     st.session_state["show_cycle_detail"] = False
     st.rerun()
 
@@ -192,11 +201,12 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# ✅ number_input 的 key 用 jump_cycle_no（widget key），它的值来自 jump_cycle_no_state（纯状态）
 jump_no = st.number_input(
     TT("跳转到周期编号（1-36）", "Jump to cycle (1-36)"),
     min_value=1, max_value=36,
-    value=int(st.session_state.get("current_cycle_no", 1)),
-    key="jump_cycle_no",
+    value=int(st.session_state.get("jump_cycle_no_state", 1)),
+    key="jump_cycle_no",  # widget key
 )
 if st.button(TT("跳转", "Go"), key="jump_go"):
     open_cycle(int(jump_no))
@@ -238,7 +248,6 @@ for row in range(6):
                 unsafe_allow_html=True,
             )
 
-            # ✅ 迷你进度条（任务全完成=满格；没任务=空）
             st.progress(ratio)
 
             if st.button(TT("查看", "Open"), key=f"open_cycle_{no}", use_container_width=True):
@@ -257,7 +266,6 @@ if not st.session_state.get("show_cycle_detail", False):
     )
     st.stop()
 
-# 锚点：让用户明确“已进入详情区”
 st.markdown('<span class="anchor" id="cycle_detail"></span>', unsafe_allow_html=True)
 
 no = int(st.session_state.get("current_cycle_no", 1))
@@ -274,7 +282,6 @@ start_s = sp.get("start_date", "")
 end_s = sp.get("end_date", "")
 st.caption(TT(f"{start_s} ~ {end_s}", f"{start_s} ~ {end_s}"))
 
-# 顶部进度条（更强反馈）
 d, t = _progress_for_sp(sp)
 ratio = _ratio(d, t)
 st.markdown(
@@ -285,7 +292,6 @@ st.markdown(
 )
 st.progress(ratio)
 
-# 上一个/下一个
 cnav1, cnav2, cnav3 = st.columns([1, 2, 1])
 with cnav1:
     if st.button(TT("← 上一个", "← Prev"), use_container_width=True, key="prev_btn"):
@@ -296,7 +302,6 @@ with cnav3:
         open_cycle(min(36, no + 1))
         st.rerun()
 
-# 编辑主题/目标/复盘
 with st.form(f"cycle_text_form_{no}"):
     theme = st.text_input(TT("主题（Theme）", "Theme"), value=sp.get("theme", ""), key=f"theme_{no}")
     objective = st.text_area(
@@ -315,7 +320,6 @@ if saved:
 
 st.divider()
 
-# 任务清单
 st.subheader(TT("任务清单", "Tasks"))
 tasks = list_tasks_for_sprint(no) or []
 
@@ -347,7 +351,6 @@ else:
 
 st.divider()
 
-# 新增任务
 with st.form(f"add_task_form_{no}"):
     new_title = st.text_input(
         TT("新增任务（建议一句话动词开头）", "New task (verb-first)"),
@@ -366,7 +369,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.info(
     TT(
-        "提示：如果你是内测用户，建议在「备份」下载 JSON，或使用完马上导出海报/Excel，以防浏览器会话丢失。",
-        "Tip (Beta): Download JSON backup or export poster/Excel after use to avoid session loss."
+        "提示：内测版数据保存在浏览器会话中。建议在「备份」下载 JSON，或使用完马上导出海报/Excel，以防会话丢失。",
+        "Tip (Beta): Data is stored in your browser session. Download JSON backup or export poster/Excel after use."
     )
 )
