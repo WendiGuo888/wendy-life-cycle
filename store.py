@@ -216,9 +216,29 @@ def regenerate_sprints(start: date) -> None:
     store["sprints"] = sprints
 
 
-def _get_sprints_raw() -> List[Dict[str, Any]]:
+def get_sprints() -> List[dict]:
     store = _ensure_store()
-    return list(store.get("sprints", []) or [])
+    sprints = store.get("sprints", []) or []
+
+    # ✅ 强制转换：如果有人误把 ORM 对象塞进来了，也变成 dict
+    out = []
+    for sp in sprints:
+        if isinstance(sp, dict):
+            out.append(sp)
+        else:
+            # 尽量从对象上取字段
+            out.append({
+                "sprint_no": getattr(sp, "sprint_no", None),
+                "start_date": getattr(sp, "start_date", ""),
+                "end_date": getattr(sp, "end_date", ""),
+                "theme": getattr(sp, "theme", ""),
+                "objective": getattr(sp, "objective", ""),
+                "review": getattr(sp, "review", ""),
+                "tasks": getattr(sp, "tasks", []) if hasattr(sp, "tasks") else [],
+            })
+    store["sprints"] = out
+    return out
+
 
 
 def get_sprints() -> List[_SprintObj]:
