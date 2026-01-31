@@ -1,17 +1,14 @@
 # pages/2_36x10天_Growth_Plan.py
 # -*- coding: utf-8 -*-
 
-from __future__ import annotations
-
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional
-
 import streamlit as st
+from datetime import date
 
 from i18n import init_i18n, lang_selector
 from store import (
     get_sprints,
     regenerate_sprints,
+    get_sprint_by_no,
     update_sprint_text,
     list_tasks_for_sprint,
     add_task_to_sprint_unique,
@@ -20,360 +17,227 @@ from store import (
 )
 
 # -----------------------
-# ✅ set_page_config 必须在任何 st.xxx 前
+# set_page_config（必须在 st.xxx 前）
 # -----------------------
 lang = st.session_state.get("lang", "zh")
 st.set_page_config(
-    page_title=("② 36×10天" if lang == "zh" else "② 36×10 Growth Plan"),
-    page_icon="🌱",
+    page_title=("② 36×10天" if lang == "zh" else "② 36×10"),
+    page_icon="🗓️",
     layout="wide",
 )
 
-# -----------------------
-# i18n 初始化 + 侧边栏语言
-# -----------------------
 init_i18n(default="zh")
 lang_selector()
 
 def TT(zh: str, en: str) -> str:
     return zh if st.session_state.get("lang", "zh") == "zh" else en
 
-
-# -----------------------
-# 样式
-# -----------------------
 st.markdown(
     """
 <style>
 .block-container { padding-top: 1.2rem; padding-bottom: 2.0rem; max-width: 1180px; }
 .card {
-    background: #fff;
-    border-radius: 16px;
-    padding: 16px 16px;
-    margin-bottom: 14px;
-    border: 1px solid rgba(0,0,0,0.06);
-    box-shadow: 0 10px 24px rgba(0,0,0,0.04);
+  background:#fff; border-radius:16px; padding:18px 18px; margin-bottom:14px;
+  border:1px solid rgba(0,0,0,0.06); box-shadow:0 10px 24px rgba(0,0,0,0.04);
 }
-.small { color:#666; font-size: 13px; }
-.muted { color:#777; font-size: 12px; }
-hr { border: none; border-top: 1px solid rgba(0,0,0,0.06); margin: 10px 0; }
+.small{color:#666;font-size:13px;}
+.badge{
+  display:inline-block;padding:2px 10px;border-radius:999px;
+  border:1px solid rgba(0,0,0,0.08);background:rgba(0,0,0,0.03);
+  font-size:12px;margin-right:8px;margin-bottom:6px;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-
-# -----------------------
-# ✅ 兼容层：dict / 对象 统一
-# -----------------------
-def to_date(x) -> Optional[date]:
-    if x is None:
-        return None
-    if isinstance(x, date) and not isinstance(x, datetime):
-        return x
-    if isinstance(x, datetime):
-        return x.date()
-    if isinstance(x, str) and x.strip():
-        try:
-            return datetime.fromisoformat(x.strip()).date()
-        except Exception:
-            return None
-    return None
-
-
-def sprint_to_dict(sp) -> Dict[str, Any]:
-    """兼容 store 返回 dict / dataclass / ORM 对象，统一转 dict"""
-    if sp is None:
-        return {}
-    if isinstance(sp, dict):
-        return sp
-    d = {}
-    for k in ["sprint_no", "start_date", "end_date", "theme", "objective", "review", "mit", "tasks"]:
-        if hasattr(sp, k):
-            d[k] = getattr(sp, k)
-    return d
-
-
-def task_to_dict(t) -> Dict[str, Any]:
-    if t is None:
-        return {}
-    if isinstance(t, dict):
-        return t
-    d = {}
-    for k in ["id", "title", "done", "evidence", "source_care_id"]:
-        if hasattr(t, k):
-            d[k] = getattr(t, k)
-    return d
-
+def _norm(s: str) -> str:
+    return (s or "").strip()
 
 def sprints_ready() -> bool:
-    sps = get_sprints()
-    return bool(sps) and len(sps) >= 36
+    sps = get_sprints() or []
+    return isinstance(sps, list) and len(sps) >= 36
 
+def ensure_current_cycle():
+    if "current_cycle_no" not in st.session_state:
+        st.session_state["current_cycle_no"] = 1
+    try:
+        st.session_state["current_cycle_no"] = int(st.session_state["current_cycle_no"])
+    except Exception:
+        st.session_state["current_cycle_no"] = 1
+    if st.session_state["current_cycle_no"] < 1:
+        st.session_state["current_cycle_no"] = 1
+    if st.session_state["current_cycle_no"] > 36:
+        st.session_state["current_cycle_no"] = 36
 
-def get_sprint_dict_by_no(no: int) -> Dict[str, Any]:
-    for sp in get_sprints() or []:
-        spd = sprint_to_dict(sp)
-        if int(spd.get("sprint_no", -1) or -1) == int(no):
-            return spd
-    return {}
+ensure_current_cycle()
 
-
-# -----------------------
-# 状态：当前查看哪个周期（1..36），None 表示总览
-# -----------------------
-if "current_cycle_no" not in st.session_state:
-    st.session_state.current_cycle_no = None  # type: ignore
-
-
-# -----------------------
-# 顶部标题
-# -----------------------
 st.title(TT("② 36×10：自我提升计划（10天行动周期）", "② 36×10: Growth Plan (10-day cycles)"))
 st.caption(
     TT(
-        "流程：先生成 36 个周期 → 逐个填写主题/交付物 → 添加任务并勾选完成 → 去④导出。",
-        "Flow: generate 36 cycles → fill theme/deliverables → add tasks & mark done → export in page ④.",
+        "流程：先生成 36 个周期 → 编辑周期主题/交付物 → 添加任务并勾选完成 → 去④导出。",
+        "Flow: Generate 36 cycles → Edit theme/deliverables → Add tasks & mark done → Export in page ④.",
     )
 )
 
-
-# =========================================================
-# A｜生成/重建 36×10
-# =========================================================
+# -----------------------
+# A | 生成/重建
+# -----------------------
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader(TT("A｜生成/重建 36×10 周期", "A | Generate / Rebuild 36×10 Cycles"))
+st.subheader(TT("A｜生成/重建 36×10 周期", "A | Generate / Rebuild 36×10"))
 
 if not sprints_ready():
-    st.info(TT("还没有生成 36×10 周期。请先生成。", "No 36×10 cycles yet. Please generate first."))
+    st.warning(
+        TT("你还没有生成 36×10 周期。请选择开始日期并生成。", "No cycles yet. Pick a start date and generate.")
+    )
 else:
-    st.success(TT("已检测到 36×10 周期 ✅", "36×10 cycles detected ✅"))
+    st.info(
+        TT("已生成 36×10 周期。如需重新开始，可重建（会清空旧周期主题与任务）。",
+           "Cycles generated. You can rebuild (will clear existing themes & tasks).")
+    )
 
-start_default = date.today()
-start_dt = st.date_input(
-    TT("选择开始日期（第1周期的第1天）", "Pick start date (Day 1 of Cycle 1)"),
-    value=start_default,
-    key="gp_start_date",
+start = st.date_input(TT("请选择开始日期", "Pick a start date"), value=date.today(), key="gp_start_date")
+
+col1, col2 = st.columns(2)
+with col1:
+    if st.button(TT("🚀 生成/重建 36×10（会清空旧周期与任务）", "🚀 Generate/Rebuild 36×10 (clears old data)"),
+                 use_container_width=True, key="gp_rebuild_btn"):
+        regenerate_sprints(start)
+        st.success(TT("已生成 36 个周期 ✅", "Generated 36 cycles ✅"))
+        st.session_state["current_cycle_no"] = 1
+        st.rerun()
+
+with col2:
+    st.markdown('<div class="small">', unsafe_allow_html=True)
+    st.write(TT("提示：生成后，你可以从年度挖掘或 CARE 一键分配任务到某个周期。",
+                "Tip: After generating, you can assign tasks from Annual Planning or CARE into cycles."))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+if not sprints_ready():
+    st.stop()
+
+# -----------------------
+# B | Overview
+# -----------------------
+sps = get_sprints()
+done_cnt = 0
+task_cnt = 0
+for sp in sps:
+    tasks = sp.get("tasks", []) or []
+    task_cnt += len(tasks)
+    done_cnt += sum(1 for t in tasks if bool(t.get("done", False)))
+
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.subheader(TT("B｜总览", "B | Overview"))
+st.markdown(
+    f'<span class="badge">{TT("周期数","Cycles")}: 36</span>'
+    f'<span class="badge">{TT("任务","Tasks")}: {task_cnt}</span>'
+    f'<span class="badge">{TT("完成","Done")}: {done_cnt}</span>',
+    unsafe_allow_html=True
 )
 
-colA, colB = st.columns([1, 2])
-with colA:
-    gen_btn = st.button(
-        TT("🚀 生成/重建 36×10（会清空旧周期与任务）", "🚀 Generate / Rebuild 36×10 (clears old cycles & tasks)"),
-        use_container_width=True,
-        key="gp_regen_btn",
-    )
-with colB:
-    st.markdown(
-        f'<div class="small">{TT("提示：重建会清空所有周期内容与任务。若你想保留，请先去「备份」页导出 JSON。", "Tip: Rebuild clears all cycle texts & tasks. If you want to keep them, export JSON in Backup page first.")}</div>',
-        unsafe_allow_html=True,
-    )
-
-if gen_btn:
-    regenerate_sprints(start_dt)
-    st.session_state.current_cycle_no = None
-    st.success(TT("已生成 36 个周期 ✅", "Generated 36 cycles ✅"))
+# 快速跳转
+jump_no = st.number_input(TT("跳转到周期编号（1-36）", "Jump to cycle (1-36)"),
+                          min_value=1, max_value=36, value=int(st.session_state["current_cycle_no"]),
+                          key="jump_cycle_no")
+if st.button(TT("跳转", "Go"), key="jump_go"):
+    st.session_state["current_cycle_no"] = int(jump_no)
     st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+# -----------------------
+# C | 单周期详情
+# -----------------------
+ensure_current_cycle()
+no = int(st.session_state["current_cycle_no"])
+sp = get_sprint_by_no(no)
 
-# =========================================================
-# B｜总览（36格）
-# =========================================================
-def render_overview():
-    sps = [sprint_to_dict(x) for x in (get_sprints() or [])]
-    if not sps:
-        st.warning(TT("请先在上方生成 36×10 周期。", "Please generate 36×10 cycles above first."))
-        return
+st.markdown('<div class="card">', unsafe_allow_html=True)
+st.subheader(TT(f"C｜周期 {no} 详情", f"C | Cycle {no} Details"))
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(TT("B｜总览（点击进入某个周期）", "B | Overview (click a cycle to edit)"))
-    st.caption(
-        TT(
-            "每格：周期号 + 日期范围 + 主题（若已填写）。",
-            "Each tile shows: cycle no + date range + theme (if filled).",
-        )
-    )
+if not sp:
+    st.error(TT("未找到该周期，请先重建 36×10。", "Cycle not found. Please rebuild 36×10."))
+    st.stop()
 
-    cols = st.columns(6)
-    for i in range(36):
-        sp = sps[i] if i < len(sps) else {}
-        no = int(sp.get("sprint_no", i + 1) or (i + 1))
-        sd = to_date(sp.get("start_date"))
-        ed = to_date(sp.get("end_date"))
-        theme = (sp.get("theme") or "").strip()
+st.caption(TT(f"{sp.get('start_date','')} ~ {sp.get('end_date','')}",
+              f"{sp.get('start_date','')} ~ {sp.get('end_date','')}"))
 
-        date_str = ""
-        if sd and ed:
-            date_str = f"{sd.strftime('%Y/%m/%d')} - {ed.strftime('%m/%d')}"
-        else:
-            date_str = TT("（未设置日期）", "(date missing)")
-
-        title = f"{TT('第', 'Cycle ')}{no}{TT('周期', '')}"
-        subtitle = theme if theme else TT("（未填写主题）", "(theme not set)")
-
-        with cols[i % 6]:
-            with st.container(border=True):
-                st.markdown(f"**{title}**")
-                st.markdown(f"<div class='muted'>{date_str}</div>", unsafe_allow_html=True)
-                st.markdown(f"{subtitle}")
-                if st.button(TT("编辑", "Edit"), key=f"ov_go_{no}", use_container_width=True):
-                    st.session_state.current_cycle_no = no
-                    st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# =========================================================
-# C｜周期详情
-# =========================================================
-def render_cycle_detail(cycle_no: int):
-    sp = get_sprint_dict_by_no(cycle_no)
-
-    if not sp:
-        st.warning(TT("找不到该周期数据。请先生成 36×10。", "Cannot find this cycle. Please generate 36×10 first."))
-        return
-
-    sd = to_date(sp.get("start_date"))
-    ed = to_date(sp.get("end_date"))
-
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader(TT(f"C｜第{cycle_no}周期（10天）", f"C | Cycle {cycle_no} (10 days)"))
-
-    # 顶部导航
-    nav1, nav2, nav3 = st.columns([1, 1, 1])
-    with nav1:
-        if st.button(TT("⬅ 返回总览", "⬅ Back to overview"), use_container_width=True, key="btn_back_overview"):
-            st.session_state.current_cycle_no = None
-            st.rerun()
-    with nav2:
-        if st.button(TT("⬅ 上一个", "⬅ Prev"), use_container_width=True, key="btn_prev"):
-            st.session_state.current_cycle_no = max(1, cycle_no - 1)
-            st.rerun()
-    with nav3:
-        if st.button(TT("下一个 ➡", "Next ➡"), use_container_width=True, key="btn_next"):
-            st.session_state.current_cycle_no = min(36, cycle_no + 1)
-            st.rerun()
-
-    st.markdown("<hr/>", unsafe_allow_html=True)
-
-    # 日期显示
-    if sd and ed:
-        st.caption(TT("周期日期：", "Cycle dates: ") + f"{sd.strftime('%Y/%m/%d')} - {ed.strftime('%Y/%m/%d')}")
-    else:
-        st.caption(TT("周期日期：未设置（请重建 36×10）", "Cycle dates: missing (please rebuild 36×10)"))
-
-    # 主题 / 交付物 / 复盘
-    theme_key = f"theme_{cycle_no}"
-    obj_key = f"obj_{cycle_no}"
-    review_key = f"review_{cycle_no}"
-
-    theme = st.text_input(
-        TT("主题（Theme）", "Theme"),
-        value=(sp.get("theme") or ""),
-        key=theme_key,
-        placeholder=TT("例如：论文冲刺 / 体能训练 / IP增长", "e.g., Paper sprint / Fitness / Content growth"),
-    )
-
-    objective = st.text_area(
-        TT("交付物/成果（Deliverables）", "Deliverables"),
-        value=(sp.get("objective") or ""),
-        key=obj_key,
-        height=120,
-        placeholder=TT("写清楚10天后你要交付什么：可衡量、可验证。", "Define what you will deliver in 10 days. Measurable and verifiable."),
-    )
-
-    review = st.text_area(
-        TT("复盘（Review）", "Review"),
-        value=(sp.get("review") or ""),
-        key=review_key,
-        height=110,
-        placeholder=TT("完成了什么？证据是什么？下轮要怎么改？", "What was done? Evidence? What to improve next cycle?"),
-    )
-
-    save_col, _ = st.columns([1, 2])
-    with save_col:
-        if st.button(TT("💾 保存本周期", "💾 Save this cycle"), use_container_width=True, key=f"save_cycle_{cycle_no}"):
-            update_sprint_text(cycle_no, theme=theme, objective=objective, review=review)
-            st.success(TT("已保存 ✅", "Saved ✅"))
-            st.rerun()
-
-    st.markdown("<hr/>", unsafe_allow_html=True)
-
-    # 任务区
-    st.subheader(TT("任务清单（Tasks）", "Tasks"))
-
-    add_title = st.text_input(
-        TT("新增任务（回车或点击添加）", "Add a task (press Enter or click Add)"),
-        value="",
-        key=f"new_task_{cycle_no}",
-        placeholder=TT("例如：每天写作30分钟 / 完成实验数据整理", "e.g., Write 30 mins/day / Clean experiment data"),
-    )
-    add_btn = st.button(TT("➕ 添加任务", "➕ Add task"), key=f"btn_add_task_{cycle_no}")
-
-    if add_btn:
-        add_task_to_sprint_unique(cycle_no, add_title.strip(), source_care_id=None)
+# 上一个/下一个
+cnav1, cnav2, cnav3 = st.columns([1, 2, 1])
+with cnav1:
+    if st.button(TT("← 上一个", "← Prev"), use_container_width=True, key="prev_btn"):
+        st.session_state["current_cycle_no"] = max(1, no - 1)
+        st.rerun()
+with cnav3:
+    if st.button(TT("下一个 →", "Next →"), use_container_width=True, key="next_btn"):
+        st.session_state["current_cycle_no"] = min(36, no + 1)
         st.rerun()
 
-    tasks_raw = list_tasks_for_sprint(cycle_no) or []
-    tasks = [task_to_dict(x) for x in tasks_raw]
+# 编辑主题/目标/复盘
+with st.form(f"cycle_text_form_{no}"):
+    theme = st.text_input(TT("主题（Theme）", "Theme"), value=sp.get("theme", ""), key=f"theme_{no}")
+    objective = st.text_area(TT("交付物/目标（Objective）", "Objective / Deliverables"),
+                             value=sp.get("objective", ""), height=110, key=f"obj_{no}")
+    review = st.text_area(TT("复盘（Review）", "Review"),
+                          value=sp.get("review", ""), height=110, key=f"rev_{no}")
+    saved = st.form_submit_button(TT("💾 保存本周期内容", "💾 Save cycle"))
+if saved:
+    update_sprint_text(no, theme, objective, review)
+    st.success(TT("已保存 ✅", "Saved ✅"))
+    st.rerun()
 
-    if not tasks:
-        st.info(TT("还没有任务。先添加一条吧。", "No tasks yet. Add one above."))
-    else:
-        for idx, t in enumerate(tasks):
-            tid = str(t.get("id", f"{cycle_no}_{idx}"))
-            title = (t.get("title") or "").strip()
-            done = bool(t.get("done", False))
-            evidence = t.get("evidence") or ""
+st.divider()
 
-            with st.container(border=True):
-                c1, c2 = st.columns([1, 6])
-                with c1:
-                    new_done = st.checkbox(TT("完成", "Done"), value=done, key=f"done_{tid}")
-                    if new_done != done:
-                        toggle_task_done(tid, new_done)
-                        st.rerun()
+# 任务清单
+st.subheader(TT("任务清单", "Tasks"))
 
-                with c2:
-                    st.markdown(f"**{title}**")
-                    ev = st.text_area(
-                        TT("证据/备注（可选）", "Evidence/Notes (optional)"),
-                        value=evidence,
-                        key=f"ev_{tid}",
-                        height=80,
-                        placeholder=TT("例如：截图链接 / 文档链接 / 里程碑说明", "e.g., screenshot link / doc link / milestone notes"),
-                    )
-                    if ev != evidence:
-                        update_task_evidence(tid, ev)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# =========================================================
-# 渲染入口：总览 或 详情
-# =========================================================
-if st.session_state.current_cycle_no is None:
-    render_overview()
+tasks = list_tasks_for_sprint(no) or []
+if not tasks:
+    st.info(TT("暂无任务。你可以：1）从年度挖掘/CARE 分配；2）在这里新增任务。", "No tasks yet. Assign from Annual/CARE or add below."))
 else:
-    try:
-        no = int(st.session_state.current_cycle_no)
-        no = max(1, min(36, no))
-    except Exception:
-        no = 1
-    render_cycle_detail(no)
+    for t in tasks:
+        tid = t.get("id", "")
+        title = t.get("title", "")
+        done = bool(t.get("done", False))
+        src = (t.get("source_care_id", "") or "").strip()
 
+        left, right = st.columns([4, 2])
+        with left:
+            new_done = st.checkbox(title, value=done, key=f"done_{tid}")
+            if new_done != done:
+                toggle_task_done(tid, new_done)
+                st.rerun()
+            if src:
+                st.markdown(f'<span class="badge">from CARE</span><span class="badge">care_id={src}</span>', unsafe_allow_html=True)
 
-# =========================================================
-# 底部提示
-# =========================================================
+        with right:
+            ev = st.text_input(TT("证据/备注", "Evidence/Notes"),
+                               value=t.get("evidence", ""), key=f"ev_{tid}")
+            if ev != (t.get("evidence","") or ""):
+                update_task_evidence(tid, ev)
+
+    st.caption(TT("提示：勾选完成会即时保存；证据/备注输入后自动保存。", "Tip: done status saves instantly; notes auto-save."))
+
+st.divider()
+
+# 新增任务
+with st.form(f"add_task_form_{no}"):
+    new_title = st.text_input(TT("新增任务（建议一句话动词开头）", "New task (verb-first)"), key=f"new_task_{no}")
+    add_btn = st.form_submit_button(TT("➕ 添加到本周期", "➕ Add to this cycle"))
+if add_btn:
+    if not _norm(new_title):
+        st.warning(TT("请输入任务标题。", "Please enter a task title."))
+    else:
+        add_task_to_sprint_unique(no, _norm(new_title), source_care_id="")
+        st.success(TT("已添加 ✅", "Added ✅"))
+        st.rerun()
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 st.info(
-    "📣 当前为「粉丝内测版」：每位访问者的数据仅保存在本次浏览器 Session 中，刷新/换设备可能会丢失。\n\n"
-    "✅ 建议使用方式：\n"
-    "1）完成填写后，先在【数据备份 / Backup】下载 JSON 备份；\n"
-    "2）或直接在【导出中心】立刻导出海报图片 + 36×10 Excel 保存到本地。\n\n"
-    "（后续正式版会上线账号/长期保存功能）"
+    TT("下一步：去「④ 导出中心」导出海报与 6×6 Excel；也建议在「备份」下载 JSON 以防浏览器会话丢失。",
+       "Next: Export poster & 6×6 Excel in page ④; also download JSON backup to avoid session loss.")
 )
-
-
