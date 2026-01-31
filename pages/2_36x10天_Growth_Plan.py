@@ -39,28 +39,48 @@ def sprints_ready() -> bool:
     sps = get_sprints() or []
     return isinstance(sps, list) and len(sps) >= 36
 
-def ensure_state():
-    if "current_cycle_no" not in st.session_state:
-        st.session_state["current_cycle_no"] = 1
-    if "show_cycle_detail" not in st.session_state:
-        st.session_state["show_cycle_detail"] = False
-    if "jump_cycle_no_state" not in st.session_state:
-        st.session_state["jump_cycle_no_state"] = int(st.session_state["current_cycle_no"])
+def _progress_for_sp(sp: dict) -> tuple[int, int]:
+    tasks = sp.get("tasks", []) or []
+    total = len(tasks)
+    done = sum(1 for t in tasks if bool(t.get("done", False)))
+    return done, total
 
-    # clamp
+def _ratio(done: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return max(0.0, min(1.0, done / total))
+
+def _theme_preview(sp: dict) -> str:
+    t = _norm(sp.get("theme", ""))
+    if not t:
+        return TT("未填写主题", "No theme yet")
+    return t[:22] + ("…" if len(t) > 22 else "")
+
+# -----------------------
+# 路由：用 query param ?cycle=xx 做“进入详情页”
+# -----------------------
+def get_cycle_from_query() -> int | None:
+    qp = st.query_params
+    raw = qp.get("cycle", None)
+    if raw is None or raw == "":
+        return None
     try:
-        st.session_state["current_cycle_no"] = int(st.session_state["current_cycle_no"])
+        n = int(raw)
+        if 1 <= n <= 36:
+            return n
     except Exception:
-        st.session_state["current_cycle_no"] = 1
-    st.session_state["current_cycle_no"] = max(1, min(36, st.session_state["current_cycle_no"]))
+        return None
+    return None
 
-    try:
-        st.session_state["jump_cycle_no_state"] = int(st.session_state["jump_cycle_no_state"])
-    except Exception:
-        st.session_state["jump_cycle_no_state"] = int(st.session_state["current_cycle_no"])
-    st.session_state["jump_cycle_no_state"] = max(1, min(36, st.session_state["jump_cycle_no_state"]))
+def goto_cycle(n: int):
+    st.query_params["cycle"] = str(int(n))
+    st.rerun()
 
-ensure_state()
+def goto_overview():
+    # 清掉 cycle 参数 -> 回到总览页
+    if "cycle" in st.query_params:
+        del st.query_params["cycle"]
+    st.rerun()
 
 # -----------------------
 # 样式
@@ -100,40 +120,10 @@ st.markdown(
 .cycle-theme span{ font-weight: 500; color:#444; }
 .cycle-progress{ margin-top: 8px; font-size: 12px; color:#444; }
 .hr-soft{ margin: 10px 0 12px 0; border-top: 1px solid rgba(0,0,0,0.06); }
-
-.anchor {
-  display:block;
-  position:relative;
-  top:-72px;
-  visibility:hidden;
-}
 </style>
 """,
     unsafe_allow_html=True,
 )
-
-def _progress_for_sp(sp: dict) -> tuple[int, int]:
-    tasks = sp.get("tasks", []) or []
-    total = len(tasks)
-    done = sum(1 for t in tasks if bool(t.get("done", False)))
-    return done, total
-
-def _ratio(done: int, total: int) -> float:
-    if total <= 0:
-        return 0.0
-    return max(0.0, min(1.0, done / total))
-
-def _theme_preview(sp: dict) -> str:
-    t = _norm(sp.get("theme", ""))
-    if not t:
-        return TT("未填写主题", "No theme yet")
-    return t[:22] + ("…" if len(t) > 22 else "")
-
-def open_cycle(no: int):
-    """✅ 不要写 widget 的 key（jump_cycle_no），只写纯状态 key"""
-    st.session_state["current_cycle_no"] = int(no)
-    st.session_state["show_cycle_detail"] = True
-    st.session_state["jump_cycle_no_state"] = int(no)  # 纯状态，不是 widget key
 
 # -----------------------
 # 页面头
@@ -141,13 +131,13 @@ def open_cycle(no: int):
 st.title(TT("② 36×10：自我提升计划（10天行动周期）", "② 36×10: Growth Plan (10-day cycles)"))
 st.caption(
     TT(
-        "流程：先生成 36 个周期 → 编辑主题/交付物 → 添加任务并勾选完成 → 去④导出。",
-        "Flow: Generate 36 cycles → Edit theme/deliverables → Add tasks & mark done → Export in page ④.",
+        "体验：总览只看 6×6 卡片；点击「查看」进入周期详情与任务清单。",
+        "Experience: Overview shows only 6×6 cards. Click “Open” to enter cycle details & tasks.",
     )
 )
 
 # -----------------------
-# A | 生成/重建
+# A | 生成/重建（总览页、详情页都需要）
 # -----------------------
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.subheader(TT("A｜生成/重建 36×10 周期", "A | Generate / Rebuild 36×10"))
@@ -169,10 +159,7 @@ if st.button(
 ):
     regenerate_sprints(start)
     st.success(TT("已生成 36 个周期 ✅", "Generated 36 cycles ✅"))
-    st.session_state["current_cycle_no"] = 1
-    st.session_state["jump_cycle_no_state"] = 1
-    st.session_state["show_cycle_detail"] = False
-    st.rerun()
+    goto_overview()
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -180,99 +167,105 @@ if not sprints_ready():
     st.stop()
 
 sps = get_sprints()
+cycle_q = get_cycle_from_query()
+
+# =====================================================================
+# ✅ 页面分支：
+# - 没有 ?cycle=xx -> 只显示 B 总览
+# - 有 ?cycle=xx -> 只显示 C 详情
+# =====================================================================
 
 # -----------------------
-# B | 总览 + 6×6 小卡片（带进度条）
+# B | 总览（只显示卡片）
 # -----------------------
-task_cnt = 0
-done_cnt = 0
-for sp in sps:
-    d, t = _progress_for_sp(sp)
-    done_cnt += d
-    task_cnt += t
-
-st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader(TT("B｜总览（小卡片 6×6）", "B | Overview (6×6 cards)"))
-
-st.markdown(
-    f'<span class="badge">{TT("周期数","Cycles")}: 36</span>'
-    f'<span class="badge">{TT("任务","Tasks")}: {task_cnt}</span>'
-    f'<span class="badge">{TT("完成","Done")}: {done_cnt}</span>',
-    unsafe_allow_html=True
-)
-
-# ✅ number_input 的 key 用 jump_cycle_no（widget key），它的值来自 jump_cycle_no_state（纯状态）
-jump_no = st.number_input(
-    TT("跳转到周期编号（1-36）", "Jump to cycle (1-36)"),
-    min_value=1, max_value=36,
-    value=int(st.session_state.get("jump_cycle_no_state", 1)),
-    key="jump_cycle_no",  # widget key
-)
-if st.button(TT("跳转", "Go"), key="jump_go"):
-    open_cycle(int(jump_no))
-    st.rerun()
-
-st.markdown('<div class="hr-soft"></div>', unsafe_allow_html=True)
-
-# 6×6
-for row in range(6):
-    cols = st.columns(6, gap="small")
-    for col_i in range(6):
-        idx = row * 6 + col_i
-        sp = sps[idx]
-        no = int(sp.get("sprint_no", idx + 1))
-        start_s = sp.get("start_date", "")
-        end_s = sp.get("end_date", "")
-        theme = _theme_preview(sp)
-
+if cycle_q is None:
+    task_cnt = 0
+    done_cnt = 0
+    for sp in sps:
         d, t = _progress_for_sp(sp)
-        ratio = _ratio(d, t)
-        pct = int(round(ratio * 100))
+        done_cnt += d
+        task_cnt += t
 
-        is_active = (no == int(st.session_state.get("current_cycle_no", 1)))
-        header_right = TT("当前", "Current") if is_active else ""
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader(TT("B｜总览（小卡片 6×6）", "B | Overview (6×6 cards)"))
 
-        with cols[col_i]:
-            st.markdown(
-                f"""
+    st.markdown(
+        f'<span class="badge">{TT("周期数","Cycles")}: 36</span>'
+        f'<span class="badge">{TT("任务","Tasks")}: {task_cnt}</span>'
+        f'<span class="badge">{TT("完成","Done")}: {done_cnt}</span>',
+        unsafe_allow_html=True
+    )
+
+    # 可选：跳转到某个周期
+    jump_no = st.number_input(
+        TT("跳转到周期编号（1-36）", "Jump to cycle (1-36)"),
+        min_value=1, max_value=36, value=1,
+        key="jump_cycle_input",
+    )
+    if st.button(TT("跳转到详情", "Go to details"), key="jump_go_btn"):
+        goto_cycle(int(jump_no))
+
+    st.markdown('<div class="hr-soft"></div>', unsafe_allow_html=True)
+
+    for row in range(6):
+        cols = st.columns(6, gap="small")
+        for col_i in range(6):
+            idx = row * 6 + col_i
+            sp = sps[idx]
+            no = int(sp.get("sprint_no", idx + 1))
+            start_s = sp.get("start_date", "")
+            end_s = sp.get("end_date", "")
+            theme = _theme_preview(sp)
+
+            d, t = _progress_for_sp(sp)
+            ratio = _ratio(d, t)
+            pct = int(round(ratio * 100))
+
+            with cols[col_i]:
+                st.markdown(
+                    f"""
 <div class="cycle-card">
   <div class="cycle-top">
     <div>{TT("周期","Cycle")} {no}</div>
-    <div style="color:#777;font-weight:700;font-size:12px;">{header_right}</div>
+    <div style="color:#777;font-weight:700;font-size:12px;"></div>
   </div>
   <div class="cycle-sub">{start_s} ~ {end_s}</div>
   <div class="cycle-theme">{TT("主题","Theme")}: <span>{theme}</span></div>
   <div class="cycle-progress">{TT("进度","Progress")}: {d}/{t} · {pct}%</div>
 </div>
 """,
-                unsafe_allow_html=True,
-            )
+                    unsafe_allow_html=True,
+                )
+                st.progress(ratio)
 
-            st.progress(ratio)
+                # ✅ 真正“进入详情页”
+                if st.button(TT("查看", "Open"), key=f"open_{no}", use_container_width=True):
+                    goto_cycle(no)
 
-            if st.button(TT("查看", "Open"), key=f"open_cycle_{no}", use_container_width=True):
-                open_cycle(no)
-                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
-st.markdown("</div>", unsafe_allow_html=True)
-
-# -----------------------
-# C | 单周期详情（只有点击“查看/跳转”后才出现）
-# -----------------------
-if not st.session_state.get("show_cycle_detail", False):
     st.info(
-        TT("点击任意卡片的「查看」后，会在下方打开该周期详情。", 
-           "Click “Open” on any card to show cycle details below.")
+        TT(
+            "提示：点击卡片「查看」进入该周期详情与任务清单。",
+            "Tip: Click “Open” on a card to enter details & tasks."
+        )
     )
     st.stop()
 
-st.markdown('<span class="anchor" id="cycle_detail"></span>', unsafe_allow_html=True)
-
-no = int(st.session_state.get("current_cycle_no", 1))
+# -----------------------
+# C | 周期详情（只在 ?cycle=xx 时显示）
+# -----------------------
+no = int(cycle_q)
 sp = get_sprint_by_no(no)
 
 st.markdown('<div class="card">', unsafe_allow_html=True)
-st.subheader(TT(f"C｜周期 {no} 详情", f"C | Cycle {no} Details"))
+
+topL, topR = st.columns([3, 1])
+with topL:
+    st.subheader(TT(f"C｜周期 {no} 详情", f"C | Cycle {no} Details"))
+with topR:
+    if st.button(TT("← 返回总览", "← Back"), use_container_width=True, key="back_overview_btn"):
+        goto_overview()
 
 if not sp:
     st.error(TT("未找到该周期，请先重建 36×10。", "Cycle not found. Please rebuild 36×10."))
@@ -282,26 +275,30 @@ start_s = sp.get("start_date", "")
 end_s = sp.get("end_date", "")
 st.caption(TT(f"{start_s} ~ {end_s}", f"{start_s} ~ {end_s}"))
 
-d, t = _progress_for_sp(sp)
-ratio = _ratio(d, t)
+# 顶部导航
+nav1, nav2, nav3 = st.columns([1, 2, 1])
+with nav1:
+    if st.button(TT("← 上一个", "← Prev"), use_container_width=True, key="prev_btn"):
+        goto_cycle(max(1, no - 1))
+with nav3:
+    if st.button(TT("下一个 →", "Next →"), use_container_width=True, key="next_btn"):
+        goto_cycle(min(36, no + 1))
+
+# 进度
+tasks = list_tasks_for_sprint(no) or []
+total = len(tasks)
+done = sum(1 for t in tasks if bool(t.get("done", False)))
+ratio = _ratio(done, total)
+
 st.markdown(
-    f'<span class="badge">{TT("任务","Tasks")}: {t}</span>'
-    f'<span class="badge">{TT("完成","Done")}: {d}</span>'
+    f'<span class="badge">{TT("任务","Tasks")}: {total}</span>'
+    f'<span class="badge">{TT("完成","Done")}: {done}</span>'
     f'<span class="badge">{TT("完成率","Rate")}: {int(round(ratio*100))}%</span>',
     unsafe_allow_html=True
 )
 st.progress(ratio)
 
-cnav1, cnav2, cnav3 = st.columns([1, 2, 1])
-with cnav1:
-    if st.button(TT("← 上一个", "← Prev"), use_container_width=True, key="prev_btn"):
-        open_cycle(max(1, no - 1))
-        st.rerun()
-with cnav3:
-    if st.button(TT("下一个 →", "Next →"), use_container_width=True, key="next_btn"):
-        open_cycle(min(36, no + 1))
-        st.rerun()
-
+# 周期内容编辑
 with st.form(f"cycle_text_form_{no}"):
     theme = st.text_input(TT("主题（Theme）", "Theme"), value=sp.get("theme", ""), key=f"theme_{no}")
     objective = st.text_area(
@@ -320,8 +317,8 @@ if saved:
 
 st.divider()
 
+# 任务清单
 st.subheader(TT("任务清单", "Tasks"))
-tasks = list_tasks_for_sprint(no) or []
 
 if not tasks:
     st.info(TT("暂无任务。你可以：1）从年度挖掘/CARE 分配；2）在这里新增任务。", "No tasks yet. Assign from Annual/CARE or add below."))
@@ -329,13 +326,13 @@ else:
     for tsk in tasks:
         tid = tsk.get("id", "")
         title = tsk.get("title", "")
-        done = bool(tsk.get("done", False))
+        done_now = bool(tsk.get("done", False))
         src = _norm(tsk.get("source_care_id", ""))
 
         left, right = st.columns([4, 2])
         with left:
-            new_done = st.checkbox(title, value=done, key=f"done_{tid}")
-            if new_done != done:
+            new_done = st.checkbox(title, value=done_now, key=f"done_{tid}")
+            if new_done != done_now:
                 toggle_task_done(tid, new_done)
                 st.rerun()
             if src:
@@ -346,11 +343,12 @@ else:
         with right:
             ev = st.text_input(TT("证据/备注", "Evidence/Notes"),
                                value=tsk.get("evidence", ""), key=f"ev_{tid}")
-            if ev != (tsk.get("evidence","") or ""):
+            if ev != (tsk.get("evidence", "") or ""):
                 update_task_evidence(tid, ev)
 
 st.divider()
 
+# 新增任务
 with st.form(f"add_task_form_{no}"):
     new_title = st.text_input(
         TT("新增任务（建议一句话动词开头）", "New task (verb-first)"),
