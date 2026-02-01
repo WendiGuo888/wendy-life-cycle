@@ -101,6 +101,25 @@ st.title(t("app_title"))
 st.markdown(
     f"""
 <div class="card">
+<h2>年度使命落地系统（MVP · Beta）</h2>
+
+<ul>
+  <li><b>年度挖掘 / Life Circle</b>：责任 / 天赋 / 梦想 / 愿力 → 生成年度使命与生命之轮</li>
+  <li><b>36×10 自我提升计划</b>：36 个 10 天行动周期，明确主题 / 交付物 / 复盘 / 任务</li>
+  <li><b>CARE 四宫格</b>：把强相关灵感（inspiration）沉淀为行动 → 一键加入 10 天任务</li>
+  <li><b>导出中心</b>：一键导出海报+ 6×6 成长表</li>
+  <li><b>反馈中心</b>：一起共创「周年可持续使用」的成长系统（匿名、不收集邮箱）</li>
+</ul>
+
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+
+st.markdown(
+    f"""
+<div class="card">
 <div class="small">
 <span class="badge">Mission</span>
 <span class="badge">Action</span>
